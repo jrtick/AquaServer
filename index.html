@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>AquaServer Viewer</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  </head>
+
+  <body>
+  <big> THIS IS ONLY A TEST PAGE </big>
+  <PRE><div id="display"></div></PRE>
+  <br><br><br>
+  <div id="submission" width="100%" style="display:inline-block; text-align:center;">
+    <!-- SCRIPT CODE WILL INSERT SUBMISSION FORMS HERE -->
+    <br>
+    <button onclick="onSubmit()">Submit</button>
+    <button onclick="onClear()">Clear</button>
+    <button onclick="redraw()">Reload</button>
+    <button onclick="reloadShadow()">Update Shadow</button>
+    <br>
+    start:<input type='text' id='start'/>stop:<input type='text' id='stop'/><button onclick="showFiltered()">showFiltered</button>
+    <br>
+    <!-- SCRIPT CODE WILL INSERT GRAPHS HERE -->
+  </div>
+
+    <script type="text/javascript">
+      var hostname = "ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
+      function sendGet(url,callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, false);
+        xhr.onload = function () {
+          if(callback==undefined) return null;
+          else return callback(JSON.parse(this.responseText));
+        };
+        xhr.onerror = function(error){
+         alert("Error with upload.\n" + error);
+        };
+        xhr.send(null);
+      }
+      function sendPost(url,dict,callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+        xhr.onload = function () {
+          if(callback==undefined) return null;
+          else return callback(JSON.parse(this.responseText));
+        };
+        xhr.onerror = function(error){
+          alert("Error with upload.\n" + error);
+        }
+        xhr.send(JSON.stringify(dict));
+      }
+      
+      function updateShadow(params,state){ //state is 'desired' or 'reported'
+        update = {"state":{}};
+        update.state[state || "desired"] = params;
+        sendPost(hostname+"/shadow",update);
+      }
+      function reloadShadow(){
+        sendGet(hostname+"/shadow",function(shadow){
+          console.log(shadow);
+          display = document.getElementById("display");
+          delete(shadow.metadata);
+          post = JSON.stringify(shadow,null,4);
+          
+          console.log(post);
+          display.innerHTML = post;
+        });
+      }
+      
+      function onSubmit(){
+        //get Data
+        newdata = {Timestamp:getDataStr(),type:"data"};
+        isValid = true;
+        for(i=0;i<PARAMS.data.length;i++){
+          name = PARAMS.data[i].name;
+          if(name=="Timestamp") continue;
+          newdata[name] = document.getElementById(name).value;
+          document.getElementById(name).value = "";
+          if(PARAMS.data[i].type == "N") newdata[name] = parseInt(newdata[name]);
+          if(!PARAMS.data[i].valid(newdata[name])){
+            isValid = false;
+            console.log("ERROR: "+name+" is invalid");
+          }
+        }
+        if(isValid) sendPost(hostname+"/elem",newdata,redraw);
+        else console.log("Error: invalid. Try again.");
+      }
+      function onClear(){
+        console.log("WARNING: clearing table takes approximately 35 seconds.")
+        sendPost(hostname+"/reset",{},redraw);
+      }
+      
+      function redraw(values){
+        if(values == undefined) getData(undefined,undefined,redraw); //get data
+        else{ //display data
+          times = values.Timestamp.map(function(value,index){
+            d=parseDate(value);
+            return d.hour+":"+d.minute+":"+d.second;
+          });
+          for(i=0;i<PARAMS.data.length;i++){
+            name = PARAMS.data[i].name;
+            console.log(name+": "+values[name]);
+            if(name == "Timestamp") continue; //don't graph time vs time...
+            divID = name+"Graph";
+            layout = {
+              title: divID,
+              xaxis: {title:"Timestamp"},
+              yaxis: {title:name}
+            };
+          
+            Plotly.newPlot(divID, [{x:times,y:values[name],type:"scatter"}],layout);
+          }
+        }
+      }
+      function parseDate(date){
+        vals = (date+"").split(":");
+        if(vals.length != 6) return undefined; //invalid. should be y:mo:d:h:min:s
+        nums = [];
+        for(i=0;i<vals.length;i++){
+          num = parseInt(vals[i]);
+          if(num == NaN) return undefined;//invalid number
+          else nums.push(parseInt(vals[i])); 
+        }
+        
+        return {year:nums[0],month:nums[1],day:nums[2],
+                hour:nums[3],minute:nums[4],second:nums[5]};
+      }
+      function showFiltered(){
+          start = document.getElementById("start").value;
+          stop = document.getElementById("stop").value;
+          document.getElementById("start").value = "";
+          document.getElementById("stop").value = "";
+          
+          getData(start,stop,function(values){
+            tempData = {};
+            for(i=0;i<PARAMS.data.length;i++){
+              tempData[PARAMS.data[i].name] = values.map(function(value,index){return value[PARAMS.data[i].name];});
+            }
+            redraw(tempData);
+          });
+      }
+      
+      function getData(lower,upper,callback){
+        sendPost(hostname+"/data",{lower:lower,upper:upper},callback);
+      }
+      
+      /**** CODE THAT AINT FUNCTIONS STARTS HERE ******/ /* v */
+      var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}},
+                          {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
+                          {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
+                          {name:"lights",type:"N",valid: function(x){return x==1 || x==0;} }],
+                commands:[{name:"Timestamp",type:"S"},{name:"command",type:"S"}],
+                  config:[{name:"Timestamp",type:"S"},{name:"lights",type:"N"}, //lights are 0 or 1 to be off or on
+                          {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
+                          {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
+                    fish:[{name:"Timestamp",type:"S"},{name:"species",type:"S"}]};
+      // CREATE SUBMISSION BOXES & DIVS
+      var div = document.getElementById('submission');
+      for(i=0;i<PARAMS.data.length;i++){
+        name = PARAMS.data[i].name;
+        console.log("adding "+name);
+        if(name=="Timestamp") continue; //do timestamp yourself in submission
+        div.innerHTML = "New "+name+":<input type='text' id='"+name+"'/><br>" + div.innerHTML;
+        div.innerHTML += "<div id='"+(name+"Graph")+"' style='float:left;width:300px; height:300px;'></div>";
+      }
+      redraw();
+      reloadShadow();
+    </script>
+  </body>
+</html>
