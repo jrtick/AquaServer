@@ -48,7 +48,7 @@ app.post("/reset",function(req,res){
       }
     });
   });
-}
+});
 
 app.get("/shadow",function(req,res){
   console.log("Shadow requested.");
@@ -111,7 +111,7 @@ app.post("/elem",function(req,res){
       else console.log("posted!");
     });
   });
-}
+});
 
 app.post("/data",function(req,res){
   console.log("Database info requested.");
@@ -173,6 +173,12 @@ app.post("/data",function(req,res){
         res.send(values); //gets rid of NaNs
       }
     });
+  });
+});
+
+app.get("/",function(req,res){
+  fs.readFile("index.html",function(err,data){
+    res.send(data.toString());
   });
 });
 
