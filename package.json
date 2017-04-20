@@ -1,11 +1,29 @@
 {
   "name": "aquaserver",
   "version": "1.0.0",
-  "description": "Server for AquaOS",
+  "description": "NodeJS server for automated fish tank",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jrtick/AquaServer.git"
+  },
+  "keywords": [
+    "NodeJS",
+    "Amazon",
+    "AWS",
+    "DynamoDB",
+    "IoT",
+    "Automated",
+    "Aquarium"
+  ],
   "author": "Jordan Tick (CMU '17)",
-  "license": "ISC"
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jrtick/AquaServer/issues"
+  },
+  "homepage": "https://github.com/jrtick/AquaServer#readme"
 }
