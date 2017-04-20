@@ -7,21 +7,26 @@
   </head>
 
   <body>
+  <div style="text-align:center;">
   <big> THIS IS ONLY A TEST PAGE </big>
-  <PRE><div id="display"></div></PRE>
-  <br><br><br>
-  <div id="submission" width="100%" style="display:inline-block; text-align:center;">
-    <!-- SCRIPT CODE WILL INSERT SUBMISSION FORMS HERE -->
-    <br>
-    <button onclick="onSubmit()">Submit</button>
-    <button onclick="onClear()">Clear</button>
-    <button onclick="redraw()">Reload</button>
-    <button onclick="reloadShadow()">Update Shadow</button>
-    <br>
-    <input type='text' id='shadow'/><button onclick="updateShadow()">updateShadow</button>
-    <br>
-    start:<input type='text' id='start'/>stop:<input type='text' id='stop'/><button onclick="showFiltered()">showFiltered</button>
-    <br>
+  </div>
+  <div style="display:block;" width="100%">
+    <PRE><div width="50%" style="display:inline-block;float:left;" id="display"></div></PRE>
+    <div id="submission" width="50%" style="display:inline-block;float:right; text-align:center;">
+      <!-- SCRIPT CODE WILL INSERT SUBMISSION FORMS HERE -->
+      <br>
+      <button onclick="onSubmit()">Submit</button>
+      <button onclick="onClear()">Clear</button>
+      <button onclick="redraw()">Reload</button>
+      <button onclick="reloadShadow()">Update Shadow</button>
+      <br>
+      <input type='text' id='shadow'/><button onclick="updateShadow()">updateShadow</button>
+      <br>
+      start:<input type='text' id='start'/>stop:<input type='text' id='stop'/><button onclick="showFiltered()">showFiltered</button>
+    </div>
+  <div>
+  <div id="graphs" width="100%" style="display:inline-block;">
+    <br><br><br>
     <!-- SCRIPT CODE WILL INSERT GRAPHS HERE -->
   </div>
 
@@ -121,7 +126,6 @@
           console.log(values);
 
           times = values.map(function(value,index){
-            return value.Timestamp;
             d=parseDate(value.Timestamp);
             return d.hour+":"+d.minute+":"+d.second;
           });
@@ -184,13 +188,14 @@
                           {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
                     fish:[{name:"Timestamp",type:"S"},{name:"species",type:"S"}]};
       // CREATE SUBMISSION BOXES & DIVS
-      var div = document.getElementById('submission');
+      var sub = document.getElementById('submission'),
+       graphs = document.getElementById('graphs');
       for(i=0;i<PARAMS.data.length;i++){
         name = PARAMS.data[i].name;
         console.log("adding "+name);
         if(name=="Timestamp") continue; //do timestamp yourself in submission
-        div.innerHTML = "New "+name+":<input type='text' id='"+name+"'/><br>" + div.innerHTML;
-        div.innerHTML += "<div id='"+(name+"Graph")+"' style='float:left;width:300px; height:300px;'></div>";
+        sub.innerHTML = "New "+name+":<input type='text' id='"+name+"'/><br>" + sub.innerHTML;
+        graphs.innerHTML += "<div id='"+(name+"Graph")+"' style='float:left;width:300px; height:300px;'></div>";
       }
       redraw();
       reloadShadow();

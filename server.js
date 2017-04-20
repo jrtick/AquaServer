@@ -1,3 +1,9 @@
+/*
+ * forever start server.js
+ * forever restart server.js
+ * forever restartall
+ * forever stop server.js */
+
 var http = require("http");
 var fs = require("fs");
 var express = require("express");
