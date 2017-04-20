@@ -65,21 +65,11 @@ app.get("/shadow",function(req,res){
 });
 
 app.post("/shadow",function(req,res){
-  res.header("Access-Control-Allow-Origin","*");
-  res.header("Access-Control-Allow-Headers","Origin,X-Requested-With,Content-Type,Accept");
-  console.log("SHADOW");
-  console.log(req.body);
-  var state = "desired";
-  var co2 = req.body.co2,
-     temp = req.body.temperature,
-     dimensions = req.body.dimensions;
+  var state = req.body.state || "desired";
+  delete(req.body.state);
+  params = req.body;
 
   updatestr = {"state":{}};
-  params={};
-  params.co2 = co2;
-  params.temp = temp;
-  params.dimensions = dimensions;
-
   updatestr.state[state] = params;
   console.log(updatestr);
   IotData.updateThingShadow({thingName:thingName,payload:JSON.stringify(updatestr)},function(err,data){
@@ -95,16 +85,20 @@ app.post("/shadow",function(req,res){
 
 app.post("/elem",function(req,res){
   var newdata = req.body.newdata;
+  var time = getDateStr();
   dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
-    item = {};
+    item = {"Timestamp":{"S":time}};
     for(i=0;i<=PARAMS.data.length;i++){
       if(i==PARAMS.data.length) param = {name:"type",type:"S"};
       else param = PARAMS.data[i];
       name = param.name;
       type = param.type;
+      if(name == "Timestamp") continue;
+      else console.log(name);
       val = {};
       val[type] = ""+newdata[name];
       item[name] = val;
+      console.log(val);
     }
     dynamoDB.putItem({Item:item,TableName:tableName,ReturnConsumedCapacity:"TOTAL"},function(err,data){
       if(err) console.log(err);
@@ -159,8 +153,7 @@ app.post("/data",function(req,res){
           values[newidx] = savedval;
         }
               
-        //filter results by Timestamp
-              
+        //filter results by Timestamp            
         values = values.map(function(value,index){
           time = value.Timestamp;
           if((lower==undefined && upper==undefined) ||
@@ -198,7 +191,7 @@ app.post("*",function(req,res){
     console.log(bodyStr);
     res.send(bodyStr);
   });*/
-  res.send("NOOOOO BAD POST");
+  res.send("404 - Request invalid.");
 });
 
 http.createServer(app).listen(8080,function(){

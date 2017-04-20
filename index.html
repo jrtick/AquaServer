@@ -18,16 +18,18 @@
     <button onclick="redraw()">Reload</button>
     <button onclick="reloadShadow()">Update Shadow</button>
     <br>
+    <input type='text' id='shadow'/><button onclick="updateShadow()">updateShadow</button>
+    <br>
     start:<input type='text' id='start'/>stop:<input type='text' id='stop'/><button onclick="showFiltered()">showFiltered</button>
     <br>
     <!-- SCRIPT CODE WILL INSERT GRAPHS HERE -->
   </div>
 
     <script type="text/javascript">
-      var hostname = "ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
+      var hostname = "http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
       function sendGet(url,callback) {
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, false);
+        xhr.open('GET', url, true);
         xhr.onload = function () {
           if(callback==undefined) return null;
           else return callback(JSON.parse(this.responseText));
@@ -39,7 +41,7 @@
       }
       function sendPost(url,dict,callback) {
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', url, false);
+        xhr.open('POST', url, true);
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
         xhr.onload = function () {
           if(callback==undefined) return null;
@@ -52,11 +54,15 @@
       }
       
       function updateShadow(params,state){ //state is 'desired' or 'reported'
-        update = {"state":{}};
-        update.state[state || "desired"] = params;
-        sendPost(hostname+"/shadow",update);
+        if(params == undefined){
+          params=JSON.parse(document.getElementById("shadow").value);
+          document.getElementById("shadow").value = "";
+        }
+        params.state = params.state || state || "desired";
+        sendPost(hostname+"/shadow",params);
       }
       function reloadShadow(){
+        console.log("Getting shadow...");
         sendGet(hostname+"/shadow",function(shadow){
           console.log(shadow);
           display = document.getElementById("display");
@@ -70,7 +76,7 @@
       
       function onSubmit(){
         //get Data
-        newdata = {Timestamp:getDataStr(),type:"data"};
+        newdata = {type:"data"};
         isValid = true;
         for(i=0;i<PARAMS.data.length;i++){
           name = PARAMS.data[i].name;
@@ -83,9 +89,10 @@
             console.log("ERROR: "+name+" is invalid");
           }
         }
-        if(isValid) sendPost(hostname+"/elem",newdata,redraw);
+        if(isValid) sendPost(hostname+"/elem",{newdata:newdata},redraw);
         else console.log("Error: invalid. Try again.");
       }
+
       function onClear(){
         console.log("WARNING: clearing table takes approximately 35 seconds.")
         sendPost(hostname+"/reset",{},redraw);
@@ -94,14 +101,38 @@
       function redraw(values){
         if(values == undefined) getData(undefined,undefined,redraw); //get data
         else{ //display data
-          times = values.Timestamp.map(function(value,index){
-            d=parseDate(value);
+          console.log("Before:");
+          console.log(values);
+          values=values.sort(function(val1,val2){
+            d1 = parseDate(val1.Timestamp);
+            d2 = parseDate(val2.Timestamp);
+            /*earlier= ( d1.year*12+d1.month <d2.year*12+d2.month || 
+                    (d1.year*12+d1.month==d2.year*12+d2.month && d1.day<d2.day) ||
+                    (d1.year*12+d1.month==d2.year*12+d2.month && d1.day==d2.day &&
+                         d1.hour*3600+d1.minute*60+d1.second < d2.hour*3600+d2.minute*60+d2.second)
+                   );*/
+            earlier = d1.year*(365*3600*24)+d1.month*(30*3600*24)+d1.day*3600*24+d1.hour*3600+d1.minute*60+d1.second <
+                      d2.year*(365*3600*24)+d2.month*(30*3600*24)+d2.day*3600*24+d2.hour*3600+d2.minute*60+d2.second;
+            if(earlier) console.log(val1.Timestamp + " earlier than " + val2.Timestamp);
+            else        console.log(val1.Timestamp + " later than " + val2.Timestamp);
+            return earlier? -1 : 1;
+          });
+          console.log("After:");
+          console.log(values);
+
+          times = values.map(function(value,index){
+            return value.Timestamp;
+            d=parseDate(value.Timestamp);
             return d.hour+":"+d.minute+":"+d.second;
           });
           for(i=0;i<PARAMS.data.length;i++){
             name = PARAMS.data[i].name;
-            console.log(name+": "+values[name]);
             if(name == "Timestamp") continue; //don't graph time vs time...
+            vals = values.map(function(value,index){return value[name];});
+
+            
+
+            console.log(name+": "+vals);
             divID = name+"Graph";
             layout = {
               title: divID,
@@ -109,7 +140,7 @@
               yaxis: {title:name}
             };
           
-            Plotly.newPlot(divID, [{x:times,y:values[name],type:"scatter"}],layout);
+            Plotly.newPlot(divID, [{x:times,y:vals,type:"scatter"}],layout);
           }
         }
       }
@@ -132,20 +163,17 @@
           document.getElementById("start").value = "";
           document.getElementById("stop").value = "";
           
-          getData(start,stop,function(values){
-            tempData = {};
-            for(i=0;i<PARAMS.data.length;i++){
-              tempData[PARAMS.data[i].name] = values.map(function(value,index){return value[PARAMS.data[i].name];});
-            }
-            redraw(tempData);
-          });
+          getData(start,stop,redraw);
       }
       
       function getData(lower,upper,callback){
-        sendPost(hostname+"/data",{lower:lower,upper:upper},callback);
+        sendPost(hostname+"/data",{lower:lower,upper:upper},function(vals){
+          console.log(vals);
+          callback(vals);
+        });
       }
       
-      /**** CODE THAT AINT FUNCTIONS STARTS HERE ******/ /* v */
+      /**** CODE THAT AINT FUNCTIONS STARTS HERE ******/
       var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}},
                           {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
                           {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
