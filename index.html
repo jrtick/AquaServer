@@ -18,9 +18,11 @@
       <button onclick="onSubmit()">Submit</button>
       <button onclick="onClear()">Clear</button>
       <button onclick="redraw()">Reload</button>
-      <button onclick="reloadShadow()">Update Shadow</button>
       <br>
       <input type='text' id='shadow'/><button onclick="updateShadow()">updateShadow</button>
+      <button onclick="reloadShadow()">Reload Shadow</button>
+      <br>
+      <input type='text' id='command'/><button onclick="sendCommand()">sendCommand</button>
       <br>
       start:<input type='text' id='start'/>stop:<input type='text' id='stop'/><button onclick="showFiltered()">showFiltered</button>
     </div>
@@ -31,6 +33,13 @@
   </div>
 
     <script type="text/javascript">
+      function sendCommand(){
+	var command = document.getElementById("command").value;
+        document.getElementById("command").value = "";
+        if(command=="reset") sendPost(hostname+"/commands",{reset:true});
+        else sendPost(hostname+"/commands",{command:command});
+      }
+
       var hostname = "http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
       function sendGet(url,callback) {
         var xhr = new XMLHttpRequest();
