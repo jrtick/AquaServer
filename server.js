@@ -1,3 +1,9 @@
+/*
+ * forever start server.js
+ * forever restart server.js
+ * forever restartall
+ * forever stop server.js */
+
 var http = require("http");
 var fs = require("fs");
 var express = require("express");
@@ -29,6 +35,26 @@ fs.readFile("credentials","utf8",function(err,data){
   }
 });
 
+app.post("/reset",function(req,res){
+  console.log("WARNING: restarting table will take about 35 seconds.");
+  dynamoDB.deleteTable({TableName:tableName},function(err,data){
+    console.log("deleting table...");
+    dynamoDB.waitFor("tableNotExists",{TableName:tableName},function(err,data){
+      if(err) console.log(err);
+      else{
+        console.log("table deleted! recreating table...");
+        createTable();
+        dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
+          if(err) console.log(err);
+          else{
+            console.log("table recreated!");
+            res.send("{}");
+          }
+        });
+      }
+    });
+  });
+});
 
 app.get("/shadow",function(req,res){
   console.log("Shadow requested.");
@@ -45,21 +71,11 @@ app.get("/shadow",function(req,res){
 });
 
 app.post("/shadow",function(req,res){
-  res.header("Access-Control-Allow-Origin","*");
-  res.header("Access-Control-Allow-Headers","Origin,X-Requested-With,Content-Type,Accept");
-  console.log("SHADOW");
-  console.log(req.body);
-  var state = "desired";
-  var co2 = req.body.co2,
-     temp = req.body.temperature,
-     dimensions = req.body.dimensions;
+  var state = req.body.state || "desired";
+  delete(req.body.state);
+  params = req.body;
 
   updatestr = {"state":{}};
-  params={};
-  params.co2 = co2;
-  params.temp = temp;
-  params.dimensions = dimensions;
-
   updatestr.state[state] = params;
   console.log(updatestr);
   IotData.updateThingShadow({thingName:thingName,payload:JSON.stringify(updatestr)},function(err,data){
@@ -70,6 +86,30 @@ app.post("/shadow",function(req,res){
     }else{
       res.send("Success.");
     }
+  });
+});
+
+app.post("/elem",function(req,res){
+  var newdata = req.body.newdata;
+  var time = getDateStr();
+  dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
+    item = {"Timestamp":{"S":time}};
+    for(i=0;i<=PARAMS.data.length;i++){
+      if(i==PARAMS.data.length) param = {name:"type",type:"S"};
+      else param = PARAMS.data[i];
+      name = param.name;
+      type = param.type;
+      if(name == "Timestamp") continue;
+      else console.log(name);
+      val = {};
+      val[type] = ""+newdata[name];
+      item[name] = val;
+      console.log(val);
+    }
+    dynamoDB.putItem({Item:item,TableName:tableName,ReturnConsumedCapacity:"TOTAL"},function(err,data){
+      if(err) console.log(err);
+      else console.log("posted!");
+    });
   });
 });
 
@@ -119,8 +159,7 @@ app.post("/data",function(req,res){
           values[newidx] = savedval;
         }
               
-        //filter results by Timestamp
-              
+        //filter results by Timestamp            
         values = values.map(function(value,index){
           time = value.Timestamp;
           if((lower==undefined && upper==undefined) ||
@@ -133,6 +172,12 @@ app.post("/data",function(req,res){
         res.send(values); //gets rid of NaNs
       }
     });
+  });
+});
+
+app.get("/",function(req,res){
+  fs.readFile("index.html",function(err,data){
+    res.send(data.toString());
   });
 });
 
@@ -152,7 +197,7 @@ app.post("*",function(req,res){
     console.log(bodyStr);
     res.send(bodyStr);
   });*/
-  res.send("NOOOOO BAD POST");
+  res.send("404 - Request invalid.");
 });
 
 http.createServer(app).listen(8080,function(){
@@ -215,13 +260,13 @@ function createTable(){ /* v */
 
 
 var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}},
-                {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
-                          {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
-                          {name:"lights",type:"N",valid: function(x){return x==1 || x==0;} }],
-                commands:[{name:"Timestamp",type:"S"},{name:"command",type:"S"}],
-                  config:[{name:"Timestamp",type:"S"},{name:"lights",type:"N"}, //lights are 0 or 1 to be off or on
-                          {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
-                          {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
-                    fish:[{name:"Timestamp",type:"S"},{name:"species",type:"S"}]};
+                    {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
+                    {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
+                    {name:"lights",type:"N",valid: function(x){return x==1 || x==0;} }],
+          commands:[{name:"Timestamp",type:"S"},{name:"command",type:"S"}],
+            config:[{name:"Timestamp",type:"S"},{name:"lights",type:"N"}, //lights are 0 or 1 to be off or on
+                    {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
+                    {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
+              fish:[{name:"Timestamp",type:"S"},{name:"species",type:"S"}]};
       var DATA = {};
       for(i=0;i<PARAMS.data.length;i++) DATA[PARAMS.data[i].name] = []; 
