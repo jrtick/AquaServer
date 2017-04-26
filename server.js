@@ -89,6 +89,22 @@ app.post("/shadow",function(req,res){
   });
 });
 
+app.post("/lambda",function(req,res){
+  console.log("Heard lambda!!");
+  console.log(req.body);
+  res.send("ack");
+});
+
+var commands=[];
+app.get("/commands",function(req,res){
+  console.log("Requesting commands.");
+  res.send(commands);
+});
+app.post("/commands",function(req,res){
+  if(req.body.reset) commands = [];
+  if(req.body.command) commands.push(req.body.command);
+});
+
 app.post("/elem",function(req,res){
   var newdata = req.body.newdata;
   var time = getDateStr();
@@ -175,10 +191,35 @@ app.post("/data",function(req,res){
   });
 });
 
+var signedon=false;
 app.get("/",function(req,res){
-  fs.readFile("index.html",function(err,data){
+  if(!signedon) res.redirect("/login");
+  else{ 
+    fs.readFile("index.html",function(err,data){
+      res.send(data.toString());
+      signedon=false;
+    });
+  }
+});
+
+app.get("/login",function(req,res){
+  fs.readFile("login.html",function(err,data){
     res.send(data.toString());
   });
+});
+
+app.post("/login",function(req,res){
+  user=req.body.user;
+  pswd=req.body.password;
+  if(user!="jrtick" || pswd!="plz"){
+    console.log("invalid login."); 
+    res.send({error:"invalid username or password."});
+  }else{
+    console.log("logging in...");
+    signedon=true;
+    res.send({});
+    //res.redirect("/");
+  }
 });
 
 app.get("*",function(req,res){
