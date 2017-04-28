@@ -4,19 +4,30 @@
  * forever restartall
  * forever stop server.js */
 
+Array.prototype.contains = function(obj){
+  var i = this.length;
+  while(i--){
+    if(this[i] === obj){
+      return true;
+    }
+  }
+  return false;
+}
+
+
 var http = require("http");
 var fs = require("fs");
 var express = require("express");
 var bodyParser = require("body-parser");
 var AWS = require("aws-sdk");
 var app = express();
-
 app.use(bodyParser.urlencoded({extended:true}));
 app.use(bodyParser.json());
 
 /* load credentials */
 var thingName = "AquaOS";
 var tableName = "TempWatch";
+var passtableName = "Users";
 var creds = new AWS.Credentials();
 var dynamoDB;
 var IotData;
@@ -32,8 +43,44 @@ fs.readFile("credentials","utf8",function(err,data){
     IotData = new AWS.IotData({credentials:creds,endpoint:lines[3],region:lines[2]});
     delete(lines);
     delete(myConfig);
+/* END LOAD CREDENTIALS */
+/* Take a look at the state of DynamoDB */
+dynamoDB.listTables({},function(err,data){
+  if(err){
+    console.log(error);
+    console.log("TLDR: can't connect to AWS DynamoDB.");
+    process.exit(1);
+  }else{
+    tables = data.TableNames;
+    tables.sort(); //alphabetic ordering
+    if(!tables.contains(passtableName)){ //no users exist.
+      console.log("Fresh start.");
+    }else{
+      console.log((tables.length-1) + " users exist");
+
+      query = {TableName:passtableName,ExpressionAttributeNames:{"#TS":"timestamp"},ProjectionExpression:"username,#TS"};
+      dynamoDB.scan(query,function(err,data){
+        if(err) console.log(err);
+        else{
+          curdate = parseDate(getDateStr());
+          for(i=0;i<data.Count;i++){
+            username = data.Items[i].username.S;
+            lastAccessed = parseDate(data.Items[i].timestamp.S);
+            console.log(dateDif(lastAccessed,curdate));
+            console.log(curdate);console.log(lastAccessed);
+            if(dateDif(lastAccessed,curdate) >= 3600*24*7){ //no access in the past week
+              dynamoDB.deleteItem({TableName:passtableName,Key:{username:{S:username}}},function(err,data){console.log(err? err : data);});
+            }
+          }
+          console.log(data.Items[0]);
+        }
+      });
+    }
   }
 });
+/* END DYNAMODB CONFIG */
+}});
+
 
 app.post("/reset",function(req,res){
   console.log("WARNING: restarting table will take about 35 seconds.");
@@ -191,7 +238,6 @@ app.post("/data",function(req,res){
   });
 });
 
-var signedon=false;
 app.get("/",function(req,res){
   if(!signedon) res.redirect("/login");
   else{ 
@@ -200,6 +246,32 @@ app.get("/",function(req,res){
       signedon=false;
     });
   }
+});
+
+app.post("/newUser",function(req,res){
+  var params = req.body;
+  if(!params.password || !params.username || !params.email){
+    res.send({error:"Your request is invalid."});
+  }else{
+    newuser = {username:{S:params.username},
+               password:{S:params.password},
+               email:{S:params.email},
+               lastAccess:{S:getDateStr()}}
+    dynamoDB.putItem(newuser,function(err,data){
+      if(err){
+        console.log("error: "+err);
+        res.send({error:"Request failed. Try again."});
+      }else{
+        res.send({});
+      }
+    });
+  }
+});
+
+app.get("/newUser",function(req,res){
+  fs.readFile("NewUser.html",function(err,data){
+    res.send(data.toString());
+  });
 });
 
 app.get("/login",function(req,res){
@@ -211,15 +283,17 @@ app.get("/login",function(req,res){
 app.post("/login",function(req,res){
   user=req.body.user;
   pswd=req.body.password;
-  if(user!="jrtick" || pswd!="plz"){
-    console.log("invalid login."); 
-    res.send({error:"invalid username or password."});
-  }else{
-    console.log("logging in...");
-    signedon=true;
-    res.send({});
-    //res.redirect("/");
-  }
+  
+  dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:user}}},function(err,data){
+    if(err || data.Item.password==undefined || pswd != data.Item.password.S){
+      if(err) console.log(err);
+      res.send({error:"invalid username or password."});
+    }else{
+      console.log("logging in...");
+      signedon=true;
+      res.send({location:"/"});
+    }
+  });
 });
 
 app.get("*",function(req,res){
@@ -241,12 +315,15 @@ app.post("*",function(req,res){
   res.send("404 - Request invalid.");
 });
 
-http.createServer(app).listen(8080,function(){
-	console.log("Server running on http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com/");
+
+var signedon=false; //not signed in
+http.createServer(app).listen(8080,function(){ // I redirect the port
+  console.log("Server running on http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com/");
 });
 
 function getDateStr(){/* v */
   curtime = new Date();
+  curtime.setHours(curtime.getHours()-4); //account for aws timezone dif
   hours = curtime.getHours();
   minutes = curtime.getMinutes();
   seconds = curtime.getSeconds();
@@ -256,7 +333,30 @@ function getDateStr(){/* v */
   datestr = year+":"+month+":"+day+":"+hours+":"+minutes+":"+seconds;
   return datestr;
 }
+
+function dateDif(date1,date2){
+  d1 = new Date();
+  d1.setYear(date1.year);
+  d1.setMonth(date1.month);
+  d1.setDate(date1.day);
+  d1.setHours(date1.hour);
+  d1.setMinutes(date1.minute);
+  d1.setSeconds(date1.second);
+  d1.setMilliseconds(0);
+
+  d2 = new Date();
+  d2.setYear(date2.year);
+  d2.setMonth(date2.month);
+  d2.setDate(date2.day);
+  d2.setHours(date2.hour);
+  d2.setMinutes(date2.minute);
+  d2.setSeconds(date2.second);
+  d2.setMilliseconds(0);
+
+  return (d2-d1)/1000; //seconds apart
+}
       
+
 function parseDate(date){/* v */
   vals = (date+"").split(":");
   if(vals.length != 6) return undefined; //invalid. should be y:mo:d:h:min:s
@@ -280,7 +380,7 @@ function secondInt(date){/* v */
   for(i=0;i<date.month;i++) days += monthdays[i];
   return (days+date.day)*24*3600+date.hour*3600+date.minute*60+date.second;
 }
-      
+
 function inRange(date,date_low,date_high){/* v */
   target = parseDate(date);
   low = parseDate(date_low);
@@ -309,5 +409,5 @@ var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}}
                     {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
                     {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
               fish:[{name:"Timestamp",type:"S"},{name:"species",type:"S"}]};
-      var DATA = {};
-      for(i=0;i<PARAMS.data.length;i++) DATA[PARAMS.data[i].name] = []; 
+var DATA = {};
+for(i=0;i<PARAMS.data.length;i++) DATA[PARAMS.data[i].name] = []; 

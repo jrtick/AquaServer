@@ -9,7 +9,7 @@
     <div id="login">
       Username:<input type='text' id='user'/><br>
       Password:<input type='password' id='pswd'/><br>
-      <button onclick="login()">Login</button>
+      <button onclick="login()">Login</button> <button onclick="newUser()">New User</button>
     </div>
 
     <script type="text/javascript">
@@ -28,13 +28,16 @@
         xhr.send(JSON.stringify(dict));
       }
     
+      function newUser(){
+        window.location=host+"/newUser";
+      }
     
       function login(){
         user=document.getElementById("user").value;
         pswd=document.getElementById("pswd").value;
         sendPost(host+"/login",{user:user,password:pswd},function(resp){
           if(resp.error) console.log(resp.error);
-          else window.location = host
+          else if(resp.location) window.location = host+resp.location;
         });
       }
     </script>
