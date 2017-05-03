@@ -29,13 +29,19 @@
       }
     
       function newUser(){
-        window.location=host+"/newUser";
+        user=document.getElementById("user").value;
+        pswd=document.getElementById("pswd").value;
+        sendPost(host+"/newUser",{username:user,password:pswd},function(resp){
+          if(resp.error) console.log(resp.error);
+          else if(resp.location) window.location = host+resp.location;
+        });
+        //window.location=host+"/newUser";
       }
     
       function login(){
         user=document.getElementById("user").value;
         pswd=document.getElementById("pswd").value;
-        sendPost(host+"/login",{user:user,password:pswd},function(resp){
+        sendPost(host+"/login",{username:user,password:pswd},function(resp){
           if(resp.error) console.log(resp.error);
           else if(resp.location) window.location = host+resp.location;
         });

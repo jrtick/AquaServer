@@ -19,13 +19,30 @@ io.on("connection",function(socket){
 });
 */
 
+var ERROR = {};
+ERROR.badRequest = 400;
+ERROR.unauthorized = 401;
+ERROR.forbidden = 403;
+ERROR.notFound = 404;
+ERROR.timeout = 408;
+ERROR.tooManyRequests = 429;
+ERROR.serverError = 500;
+ERROR.serviceUnavailable = 503;
+ERROR.gatewayTimeout = 504;
+var SUCCESS = {};
+SUCCESS.okay = 200;
+SUCCESS.created = 201;
+SUCCESS.accepted = 202;
+SUCCESS.noContent = 204;
 
 /* load credentials */
 var thingName = "AquaOS", tableName = "TempWatch", passtableName = "Users";
 var dynamoDB,IotData,Robert;
 fs.readFile("credentials","utf8",function(err,data){
-  if(err) console.log(err);
-  else{
+  if(err){
+    console.log(err);
+    res.status(ERROR.serverError).send({error:"server not configured with account credentials"});
+  }else{
     lines=data.split("\n");
     creds = new AWS.Credentials(lines[0],lines[1]);
     myConfig = new AWS.Config();
@@ -36,7 +53,6 @@ fs.readFile("credentials","utf8",function(err,data){
     rcreds = new AWS.Credentials(lines[4],lines[5]);
     Robert = new AWS.IotData({credentials:rcreds,endpoint:lines[6],region:lines[2]});
     delete(lines);delete(myConfig);delete(creds);delete(rcreds);
-/* END LOAD CREDENTIALS */
 /* Take a look at the state of DynamoDB */
 dynamoDB.listTables({},function(err,data){
   if(err){
@@ -75,24 +91,12 @@ dynamoDB.listTables({},function(err,data){
 }});
 
 
-var DISABLE_LOGIN = false;
+var DISABLE_LOGIN = true;
 app.use(function(req,res,next){
-  console.log("Cookies:");
-  console.log(req.cookies);
-  res.header('Access-Control-Allow-Credentials', true);
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
-  res.header('Access-Control-Allow-Headers', 'X-Requested-With, X-HTTP-Method-Override, Content-Type, Accept');
-    
-
-  if(DISABLE_LOGIN || req.url=="/login" || req.url=="/newUser" ||
-      (req.cookies && req.cookies.token)){
-    console.log("Granted");
-    next();
-  }else{
-    if(req.cookies) console.log(JSON.stringify(req.cookies));
-    res.redirect("/login");
-  }
+  if(DISABLE_LOGIN ||
+     (req.url=="/login" || req.url=="/newUser") ||
+     (req.cookies && req.cookies.token)) next();
+  else res.status(ERROR.forbidden).redirect("/login");
 });
 app.get("/login",function(req,res){
   fs.readFile("login.html",function(err,data){
@@ -100,40 +104,48 @@ app.get("/login",function(req,res){
   });
 });
 app.post("/login",function(req,res){
-  user=req.body.user;
+  user=req.body.username;
   pswd=req.body.password;
   
   dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:user}}},function(err,data){
-    if(err || data.Item.password==undefined || pswd != data.Item.password.S){
-      if(err) console.log(err);
-      res.send({error:"invalid username or password."});
+    if(err) res.status(ERROR.serverError).send({error:err});
+    else if(!data.Item || pswd != data.Item.password.S){
+      res.status(ERROR.unauthorized).send({error:"invalid username or password."});
     }else{
       console.log("logging in...");
       signedon=true;
       cookie = {username:user,token:pswd};
       res.cookie("info",{username:user,token:pswd});
-      res.send({location:"/",cookie:cookie});
+      res.status(SUCCESS.accepted).send({location:"/",cookie:cookie});
     }
   });
 });
 app.post("/newUser",function(req,res){
   var params = req.body;
-  console.log(params);
   if(!params.password || !params.username){
-    res.send({error:"Your request is invalid."});
+    res.status(ERROR.badRequest).send({error:"Your request is invalid."});
   }else{
-    newuser = {username:{S:params.username},
-               password:{S:params.password},
-               token:{S:params.password},
-               lastAccess:{S:getDateStr()}};
-    dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
+    dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:params.username}}},function(err,data){
       if(err){
-        console.log("error: "+err);
-        res.send({error:"Request failed. Try again."});
+        res.status(ERROR.notFound).send(err);
+        console.log(err);
+      }else if(data.Item){
+        res.status(ERROR.badRequest).send({error:"Error - user already exists"});
       }else{
-        cookie = {username:params.username,token:params.password};
-        res.cookie("info",cookie,{maxAge:3600*1000});
-        res.send({location:"/",cookie:cookie,maxAge:3600*1000});
+        newuser = {username:{S:params.username},
+                   password:{S:params.password},
+                   token:{S:params.password},
+                   lastAccess:{S:getDateStr()}};
+        dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
+          if(err){
+            res.status(ERROR.serverError).send(err);
+            console.log(err);
+          }else{
+            cookie = {username:params.username,token:params.password};
+            res.cookie("info",cookie,{maxAge:3600*1000});
+            res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
+          }
+        });
       }
     });
   }
@@ -144,13 +156,9 @@ app.get("/newUser",function(req,res){
   });
 });
 app.get("/",function(req,res){
-  if(!signedon) res.redirect("/login");
-  else{ 
-    fs.readFile("index.html",function(err,data){
-      res.send(data.toString());
-      signedon=false;
-    });
-  }
+  fs.readFile("index.html",function(err,data){
+    res.send(data.toString());
+  });
 });
 
 
