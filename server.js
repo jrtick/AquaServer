@@ -5,6 +5,7 @@ var bodyParser   = require("body-parser");   //required for reading requests
 var AWS          = require("aws-sdk");       //required for AWS Services
 var cookieParser = require("cookie-parser"); //required for reading cookies
 
+
 //setup express to read/write JSON post/get reqs
 var app          = express();
 app.use(bodyParser.urlencoded({extended:true}));
@@ -53,49 +54,60 @@ fs.readFile("credentials","utf8",function(err,data){
     rcreds = new AWS.Credentials(lines[4],lines[5]);
     Robert = new AWS.IotData({credentials:rcreds,endpoint:lines[6],region:lines[2]});
     delete(lines);delete(myConfig);delete(creds);delete(rcreds);
-/* Take a look at the state of DynamoDB */
-dynamoDB.listTables({},function(err,data){
-  if(err){
-    console.log(error);
-    console.log("TLDR: can't connect to AWS DynamoDB.");
-    process.exit(1);
-  }else{
-    tables = data.TableNames;
-    tables.sort(); //alphabetic ordering
-    if(tables.indexOf(passtableName) >= 0){ //no users exist.
-      console.log("Fresh start.");
-    }else{
-      console.log((tables.length-1) + " users exist");
 
-      query = {TableName:passtableName,ExpressionAttributeNames:{"#TS":"timestamp"},ProjectionExpression:"username,#TS"};
-      dynamoDB.scan(query,function(err,data){
-        if(err) console.log(err);
-        else{
-          curdate = parseDate(getDateStr());
-          for(i=0;i<data.Count;i++){
-            username = data.Items[i].username.S;
-            lastAccessed = parseDate(data.Items[i].timestamp.S);
-            console.log(dateDif(lastAccessed,curdate));
-            console.log(curdate);console.log(lastAccessed);
-            if(dateDif(lastAccessed,curdate) >= 3600*24*7){ //no access in the past week
-              dynamoDB.deleteItem({TableName:passtableName,Key:{username:{S:username}}},function(err,data){console.log(err? err : data);});
+    /* Take a look at the state of DynamoDB */
+    dynamoDB.listTables({},function(err,data){
+      if(err){
+        console.log(error);
+        console.log("TLDR: can't connect to AWS DynamoDB.");
+        process.exit(1);
+      }else{
+        tables = data.TableNames;
+        tables.sort(); //alphabetic ordering
+        if(tables.indexOf(passtableName) < 0){ //no users exist.
+          dynamoDB.createTable({TableName:passtableName,
+            KeySchema: [{AttributeName:"username",KeyType:"HASH"}],
+            AttributeDefinitions: [{AttributeName:"username",AttributeType:"S"}],
+            ProvisionedThroughput:{ReadCapacityUnits: 1, WriteCapacityUnits:1} },
+            function(err,data){
+              if(err){
+                console.log(error);
+                console.log("TLDR: can't create username table");
+                process.exit(1);
+              }else console.log("User table created. Fresh start");
+            });
+        }else{
+          console.log((tables.length-1) + " users exist"); //assumes one table exists per user, plus users table
+
+          query = {TableName:passtableName,ExpressionAttributeNames:{"#TS":"timestamp"},ProjectionExpression:"username,#TS,lastAccess"};
+          dynamoDB.scan(query,function(err,data){
+            if(err) console.log(err);
+            else{
+              curdate = parseDate(getDateStr());
+              for(i=0;i<data.Count;i++){
+                username = data.Items[i].username.S;
+                lastAccessed = parseDate(data.Items[i].lastAccess.S);
+                if(dateDif(lastAccessed,curdate) >= 3600*24*7){ //no access in the past week
+                  console.log("Deleting user "+username+"...");
+                  dynamoDB.deleteItem({TableName:passtableName,Key:{username:{S:username}}},function(err,data){console.log(err? err : data);});
+                }
+              }
             }
-          }
-          console.log(data.Items[0]);
+          });
         }
-      });
-    }
+      }
+    });
   }
 });
-/* END DYNAMODB CONFIG */
-}});
 
-
+/* handle logins */
 var DISABLE_LOGIN = true;
+if(process.argv.length>2 && process.argv[2]=="true") DISABLE_LOGIN = false; //command line arg
+if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
 app.use(function(req,res,next){
   if(DISABLE_LOGIN ||
      (req.url=="/login" || req.url=="/newUser") ||
-     (req.cookies && req.cookies.token)) next();
+     (req.cookies && req.cookies.info)) next();
   else res.status(ERROR.forbidden).redirect("/login");
 });
 app.get("/login",function(req,res){
@@ -113,11 +125,15 @@ app.post("/login",function(req,res){
       res.status(ERROR.unauthorized).send({error:"invalid username or password."});
     }else{
       console.log("logging in...");
-      signedon=true;
       cookie = {username:user,token:pswd};
       res.cookie("info",{username:user,token:pswd});
       res.status(SUCCESS.accepted).send({location:"/",cookie:cookie});
     }
+  });
+});
+app.get("/newUser",function(req,res){
+  fs.readFile("login.html",function(err,data){
+    res.send(data.toString());
   });
 });
 app.post("/newUser",function(req,res){
@@ -150,17 +166,15 @@ app.post("/newUser",function(req,res){
     });
   }
 });
-app.get("/newUser",function(req,res){
-  fs.readFile("NewUser.html",function(err,data){
-    res.send(data.toString());
-  });
-});
-app.get("/",function(req,res){
+app.get("/",function(req,res){ //only accessible if user is logged in
   fs.readFile("index.html",function(err,data){
     res.send(data.toString());
   });
 });
-
+app.post("/logout",function(req,res){
+  res.clearCookie("info");
+  res.sendStatus(SUCCESS.noContent);
+});
 
 
 app.post("/reset",function(req,res){
