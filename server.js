@@ -5,7 +5,6 @@ var bodyParser   = require("body-parser");   //required for reading requests
 var AWS          = require("aws-sdk");       //required for AWS Services
 var cookieParser = require("cookie-parser"); //required for reading cookies
 
-
 //setup express to read/write JSON post/get reqs
 var app          = express();
 app.use(bodyParser.urlencoded({extended:true}));
@@ -175,7 +174,6 @@ app.post("/logout",function(req,res){
   res.clearCookie("info");
   res.sendStatus(SUCCESS.noContent);
 });
-
 
 app.post("/reset",function(req,res){
   console.log("WARNING: restarting table will take about 35 seconds.");
