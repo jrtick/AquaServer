@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>AquaServer Viewer</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/1.7.3/socket.io.js"></script>
   </head>
 
   <body>
@@ -33,6 +34,10 @@
   </div>
 
     <script type="text/javascript">
+      var hostname = "http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
+      console.log("connecting...");
+      var socket = io.connect(hostname);
+      socket.on("hello",function(){alert("hi");});
       function sendCommand(){
 	var command = document.getElementById("command").value;
         document.getElementById("command").value = "";
@@ -40,7 +45,6 @@
         else sendPost(hostname+"/commands",{command:command});
       }
 
-      var hostname = "http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
       function sendGet(url,callback) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
@@ -83,7 +87,6 @@
           delete(shadow.metadata);
           post = JSON.stringify(shadow,null,4);
           
-          console.log(post);
           display.innerHTML = post;
         });
       }
@@ -103,7 +106,7 @@
             console.log("ERROR: "+name+" is invalid");
           }
         }
-        if(isValid) sendPost(hostname+"/elem",{newdata:newdata},redraw);
+        if(isValid) sendPost(hostname+"/elem",newdata,redraw);
         else console.log("Error: invalid. Try again.");
       }
 
@@ -120,15 +123,8 @@
           values=values.sort(function(val1,val2){
             d1 = parseDate(val1.Timestamp);
             d2 = parseDate(val2.Timestamp);
-            /*earlier= ( d1.year*12+d1.month <d2.year*12+d2.month || 
-                    (d1.year*12+d1.month==d2.year*12+d2.month && d1.day<d2.day) ||
-                    (d1.year*12+d1.month==d2.year*12+d2.month && d1.day==d2.day &&
-                         d1.hour*3600+d1.minute*60+d1.second < d2.hour*3600+d2.minute*60+d2.second)
-                   );*/
             earlier = d1.year*(365*3600*24)+d1.month*(30*3600*24)+d1.day*3600*24+d1.hour*3600+d1.minute*60+d1.second <
                       d2.year*(365*3600*24)+d2.month*(30*3600*24)+d2.day*3600*24+d2.hour*3600+d2.minute*60+d2.second;
-            if(earlier) console.log(val1.Timestamp + " earlier than " + val2.Timestamp);
-            else        console.log(val1.Timestamp + " later than " + val2.Timestamp);
             return earlier? -1 : 1;
           });
           console.log("After:");
