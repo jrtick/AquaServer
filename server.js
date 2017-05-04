@@ -4,6 +4,7 @@ var express      = require("express");       //required for requests
 var bodyParser   = require("body-parser");   //required for reading requests
 var AWS          = require("aws-sdk");       //required for AWS Services
 var cookieParser = require("cookie-parser"); //required for reading cookies
+var randtoken    = require("rand-token");    //required for random tokens
 
 //setup express to read/write JSON post/get reqs
 var app          = express();
@@ -106,8 +107,17 @@ if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
 app.use(function(req,res,next){
   if(DISABLE_LOGIN ||
      (req.url=="/login" || req.url=="/newUser") ||
-     (req.cookies && req.cookies.info)) next();
-  else res.status(ERROR.forbidden).redirect("/login");
+     (req.cookies && req.cookies.info)){
+    if(req.cookies.info){
+      dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:req.cookies.info.username}}},function(err,data){
+        if(err){
+          console.log(err);
+          res.status(ERROR.serverError).send(err);
+        }else if(req.cookies && req.cookies.info.token == data.Item.token.S) next();
+        else res.status(ERROR.unauthorized).redirect("/login");
+      });
+    }else next();
+  }else res.status(ERROR.forbidden).redirect("/login");
 });
 app.get("/login",function(req,res){
   fs.readFile("login.html",function(err,data){
@@ -123,10 +133,21 @@ app.post("/login",function(req,res){
     else if(!data.Item || pswd != data.Item.password.S){
       res.status(ERROR.unauthorized).send({error:"invalid username or password."});
     }else{
-      console.log("logging in...");
-      cookie = {username:user,token:pswd};
-      res.cookie("info",{username:user,token:pswd});
-      res.status(SUCCESS.accepted).send({location:"/",cookie:cookie});
+      token = randtoken.generate(32);
+      dynamoDB.updateItem({TableName: passtableName,
+          Key:{"username":{S:user}},
+          ExpressionAttributeValues:{":s":{S:token}},
+          UpdateExpression: "SET token = :s"},function(err,data){
+        if(err){
+          console.log(err);
+          res.status(ERROR.serverError).send(err);
+        }else{
+          console.log("logging in...");
+          cookie = {username:user,token:token};
+          res.cookie("info",cookie);
+          res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
+        }
+      });
     }
   });
 });
@@ -156,9 +177,21 @@ app.post("/newUser",function(req,res){
             res.status(ERROR.serverError).send(err);
             console.log(err);
           }else{
-            cookie = {username:params.username,token:params.password};
-            res.cookie("info",cookie,{maxAge:3600*1000});
-            res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
+            token = randtoken.generate(32);
+            dynamoDB.updateItem({TableName: passtableName,
+                Key:{"username":{S:user}},
+                ExpressionAttributeValues:{":s":{S:token}},
+                UpdateExpression: "SET token = :s"},function(err,data){
+              if(err){
+                console.log(err);
+                res.status(ERROR.serverError).send(err);
+              }else{
+                console.log("logging in...");
+                cookie = {username:user,token:token};
+                res.cookie("info",cookie);
+                res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
+              }
+            });
           }
         });
       }
@@ -170,6 +203,19 @@ app.get("/",function(req,res){ //only accessible if user is logged in
     res.send(data.toString());
   });
 });
+app.get("/app.min.js",function(req,res){
+  fs.readFile("app.min.js",function(err,data){
+    res.send(data.toString());
+  });
+ console.log("requests "+req.url);
+});
+app.get("/application.css",function(req,res){
+   fs.readFile("application.css",function(err,data){
+    res.send(data.toString());
+  });
+ console.log("requests "+req.url);
+});
+
 app.post("/logout",function(req,res){
   res.clearCookie("info");
   res.sendStatus(SUCCESS.noContent);
@@ -268,6 +314,7 @@ app.post("/lambda",function(req,res){
   res.send("ack");
 });
 
+/*
 var commands=[];
 app.get("/commands",function(req,res){
   console.log("Requesting commands.");
@@ -277,6 +324,7 @@ app.post("/commands",function(req,res){
   if(req.body.reset) commands = [];
   if(req.body.command) commands.push(req.body.command);
 });
+*/
 
 app.post("/elem",function(req,res){
   var newdata = req.body.newdata;
