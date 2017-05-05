@@ -12,33 +12,14 @@ app.use(bodyParser.urlencoded({extended:true}));
 app.use(bodyParser.json());
 app.use(cookieParser());
 
-/* Dead code for socket.io if we want a constant connection
-var io = require("socket.io")(http);
-io.on("connection",function(socket){
-  console.log("new connection");
-  io.emit("hello");
-});
-*/
-
-var ERROR = {};
-ERROR.badRequest = 400;
-ERROR.unauthorized = 401;
-ERROR.forbidden = 403;
-ERROR.notFound = 404;
-ERROR.timeout = 408;
-ERROR.tooManyRequests = 429;
-ERROR.serverError = 500;
-ERROR.serviceUnavailable = 503;
-ERROR.gatewayTimeout = 504;
-var SUCCESS = {};
-SUCCESS.okay = 200;
-SUCCESS.created = 201;
-SUCCESS.accepted = 202;
-SUCCESS.noContent = 204;
+var ERROR = {badRequest:400,unauthorized:401,forbidden:403,notFound:404,timeout:408,
+             tooManyRequests:429,serverError:500,serviceUnavailable:503,gatewayTimeout:504};
+var SUCCESS = {okay:200,created:201,accepted:202,noContent:204};
 
 /* load credentials */
 var thingName = "AquaOS", tableName = "TempWatch", passtableName = "Users";
-var dynamoDB,IotData,Robert;
+var dynamoDB,ShadowAPI;
+//var IotData;
 fs.readFile("credentials","utf8",function(err,data){
   if(err){
     console.log(err);
@@ -49,10 +30,10 @@ fs.readFile("credentials","utf8",function(err,data){
     myConfig = new AWS.Config();
     myConfig.update({region:lines[2],credentials:creds});
     dynamoDB = new AWS.DynamoDB(myConfig);
-    IotData = new AWS.IotData({credentials:creds,endpoint:lines[3],region:lines[2]});
+    //IotData = new AWS.IotData({credentials:creds,endpoint:lines[3],region:lines[2]});
     
     rcreds = new AWS.Credentials(lines[4],lines[5]);
-    Robert = new AWS.IotData({credentials:rcreds,endpoint:lines[6],region:lines[2]});
+    ShadowAPI = new AWS.IotData({credentials:rcreds,endpoint:lines[6],region:lines[2]});
     delete(lines);delete(myConfig);delete(creds);delete(rcreds);
 
     /* Take a look at the state of DynamoDB */
@@ -215,7 +196,6 @@ app.get("/application.css",function(req,res){
   });
  console.log("requests "+req.url);
 });
-
 app.post("/logout",function(req,res){
   res.clearCookie("info");
   res.sendStatus(SUCCESS.noContent);
@@ -242,21 +222,20 @@ app.post("/reset",function(req,res){
   });
 });
 
-app.get("/rshadow",function(req,res){
-  console.log("rshadow requested.");
-  Robert.getThingShadow({thingName:"SeaSea"},function(err,data){
+app.get("/shadow",function(req,res){
+  ShadowAPI.getThingShadow({thingName:"SeaSea"},function(err,data){
     if(err){
       console.log(err);
-      res.send("ERROR");
+      res.status(ERROR.serverError);
+      res.send(err);
     }else{
       msg = JSON.parse(data.payload);
-      msg = msg.state.reported;
-      res.send(msg || {});
+      res.send(msg.state || {});
     }
   });
 });
 
-app.post("/rshadow",function(req,res){
+app.post("/shadow",function(req,res){
   var state = req.body.state || "desired";
   delete(req.body.state);
   params = req.body;
@@ -264,7 +243,7 @@ app.post("/rshadow",function(req,res){
   updatestr = {"state":{}};
   updatestr.state[state] = params;
   console.log(updatestr);
-  Robert.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
+  ShadowAPI.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
     if(err){
       console.log(err);
       res.status(400);
@@ -275,6 +254,7 @@ app.post("/rshadow",function(req,res){
   });
 });
 
+/*
 app.get("/shadow",function(req,res){
   console.log("Shadow requested.");
   IotData.getThingShadow({thingName:"AquaOS"},function(err,data){
@@ -307,13 +287,7 @@ app.post("/shadow",function(req,res){
     }
   });
 });
-
-app.post("/lambda",function(req,res){
-  console.log("Heard lambda!!");
-  console.log(JSON.stringify(req.body));
-  res.send("ack");
-});
-
+*/
 /*
 var commands=[];
 app.get("/commands",function(req,res){
@@ -325,6 +299,12 @@ app.post("/commands",function(req,res){
   if(req.body.command) commands.push(req.body.command);
 });
 */
+
+
+app.post("/lambda",function(req,res){
+  console.log("Lambda says: "+JSON.stringify(req.body));
+  res.send("ack");
+});
 
 app.post("/elem",function(req,res){
   var newdata = req.body.newdata;
@@ -538,7 +518,7 @@ app.post("/schedule",function(req,res){
   });
 
   updatestr = {state:{desired:{schedule:schedule}}};
-  Robert.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
+  ShadowAPI.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
     if(err){
       console.log(err);
       res.status(400);
