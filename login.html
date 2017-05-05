@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Login</title>
+    <meta charset="UTF-8">
+  </head>
+
+  <body>
+    <div id="login">
+      Username:<input type='text' id='user'/><br>
+      Password:<input type='password' id='pswd'/><br>
+      <button onclick="login()">Login</button> <button onclick="newUser()">New User</button>
+    </div>
+
+    <script type="text/javascript">
+      var host = "http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com";
+      function safeParse(s){
+        try{ return JSON.parse(s);}
+        catch(e){ return s;}
+      }
+      function sendPost(url,dict,callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+        xhr.onload = function () {
+          if(callback==undefined) return null;
+          else return callback(safeParse(this.responseText));
+        };
+        xhr.onerror = function(error){
+          alert("Error with upload.\n" + error);
+        }
+        xhr.send(JSON.stringify(dict));
+      }
+    
+      function newUser(){
+        user=document.getElementById("user").value;
+        pswd=document.getElementById("pswd").value;
+        sendPost(host+"/newUser",{username:user,password:pswd},function(resp){
+          if(resp.error) console.log(resp.error);
+          else if(resp.location) window.location = host+resp.location;
+        });
+      }
+    
+      function login(){
+        user=document.getElementById("user").value;
+        pswd=document.getElementById("pswd").value;
+        sendPost(host+"/login",{username:user,password:pswd},function(resp){
+          if(resp.error) console.log(resp.error);
+          else window.location = host+"/";
+        });
+      }
+    </script>
+  </body>
+</html>

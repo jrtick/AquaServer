@@ -90,8 +90,8 @@ app.get("/test",function(req,res){
 });
 
 function getUser(username,getCredentials, callback){
-  if(getCredentials) query = {TableName:passtableName,ProjectionExpression:"password,token,lastAccess"};
-  else query = {TableName:passtableName,ProjectionExpression:"database,shadow,lastAccess"};
+  if(getCredentials) query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"password,token,lastAccess"};
+  else query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"database,shadow,lastAccess"};
   dynamoDB.getItem(query,function(err,data){
     if(err){
       console.log("error getting user info for user "+JSON.stringify(username));
@@ -112,14 +112,15 @@ if(process.argv.length>2 && process.argv[2]=="true") DISABLE_LOGIN = false; //co
 if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
 app.use(function(req,res,next){
   if(DISABLE_LOGIN ||
-     (req.url=="/login" || req.url=="/newUser") ||
-     (req.cookies && req.cookies.info)){
+     (req.url=="/login" || req.url=="/newUser")) next();
+  else if(req.cookies && req.cookies.info){
     if(req.cookies.info){
-      dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:req.cookies.info.username}}},function(err,data){
+      info = JSON.parse(req.cookies.info);
+      dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:info.username}}},function(err,data){
         if(err){
           console.log(err);
           res.status(ERROR.serverError).send(err);
-        }else if(req.cookies && req.cookies.info.token == data.Item.token.S) next();
+        }else if(req.cookies && data.Item && info.theToken == data.Item.theToken.S) next();
         else res.status(ERROR.unauthorized).redirect("/login");
       });
     }else next();
@@ -151,7 +152,7 @@ app.post("/login",function(req,res){
           console.log("logging in...");
           cookie = {username:user,token:token};
           res.cookie("info",cookie);
-          res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
+          res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
         }
       });
     }
@@ -174,30 +175,20 @@ app.post("/newUser",function(req,res){
       }else if(data.Item){
         res.status(ERROR.badRequest).send({error:"Error - user already exists"});
       }else{
+        theToken = randtoken.generate(32);
         newuser = {username:{S:params.username},
                    password:{S:params.password},
-                   token:{S:params.password},
+                   theToken:{S:theToken},
                    lastAccess:{S:getDateStr()}};
         dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
           if(err){
             res.status(ERROR.serverError).send(err);
             console.log(err);
           }else{
-            token = randtoken.generate(32);
-            dynamoDB.updateItem({TableName: passtableName,
-                Key:{"username":{S:user}},
-                ExpressionAttributeValues:{":s":{S:token}},
-                UpdateExpression: "SET token = :s"},function(err,data){
-              if(err){
-                console.log(err);
-                res.status(ERROR.serverError).send(err);
-              }else{
-                console.log("logging in...");
-                cookie = {username:user,token:token};
-                res.cookie("info",cookie);
-                res.status(SUCCESS.created).send({location:"/",cookie:cookie,maxAge:3600*1000});
-              }
-            });
+            console.log("logging in...");
+            cookie = {username:params.username,theToken:theToken};
+            res.cookie("info",JSON.stringify(cookie),{maxAge:3600*1000});
+            res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
           }
         });
       }
@@ -206,6 +197,11 @@ app.post("/newUser",function(req,res){
 });
 app.get("/",function(req,res){ //only accessible if user is logged in
   fs.readFile("index.html",function(err,data){
+    res.send(data.toString());
+  });
+});
+app.get("/myIndex",function(req,res){ //only accessible if user is logged in
+  fs.readFile("myindex.html",function(err,data){
     res.send(data.toString());
   });
 });
@@ -251,8 +247,7 @@ app.get("/shadow",function(req,res){
   ShadowAPI.getThingShadow({thingName:"SeaSea"},function(err,data){
     if(err){
       console.log(err);
-      res.status(ERROR.serverError);
-      res.send(err);
+      res.status(ERROR.serverError).send(err);
     }else{
       msg = JSON.parse(data.payload);
       res.send(msg.state || {});
