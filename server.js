@@ -60,7 +60,7 @@ fs.readFile("credentials","utf8",function(err,data){
         }else{
           console.log((tables.length-1) + " users exist"); //assumes one table exists per user, plus users table
 
-          query = {TableName:passtableName,ExpressionAttributeNames:{"#TS":"timestamp"},ProjectionExpression:"username,#TS,lastAccess"};
+          query = {TableName:passtableName,ProjectionExpression:"username,lastAccess"};
           dynamoDB.scan(query,function(err,data){
             if(err) console.log(err);
             else{
@@ -80,6 +80,31 @@ fs.readFile("credentials","utf8",function(err,data){
     });
   }
 });
+
+app.get("/test",function(req,res){
+  getUser("admin",false);
+  getUser("admin",true);
+  getUser("admin",false,function(item){
+    res.send(item); 
+  });
+});
+
+function getUser(username,getCredentials, callback){
+  if(getCredentials) query = {TableName:passtableName,ProjectionExpression:"password,token,lastAccess"};
+  else query = {TableName:passtableName,ProjectionExpression:"database,shadow,lastAccess"};
+  dynamoDB.getItem(query,function(err,data){
+    if(err){
+      console.log("error getting user info for user "+JSON.stringify(username));
+      console.log(err);
+      if(callback) callback({error:err});
+    }else{
+      item = data.Item;
+      item.username = {S: username};
+      if(callback) callback({item:item});
+      else console.log(item);
+    }
+  });
+}
 
 /* handle logins */
 var DISABLE_LOGIN = true;
