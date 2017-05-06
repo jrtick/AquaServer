@@ -17,7 +17,7 @@ var ERROR = {badRequest:400,unauthorized:401,forbidden:403,notFound:404,timeout:
 var SUCCESS = {okay:200,created:201,accepted:202,noContent:204};
 
 /* load credentials */
-var thingName = "AquaOS", tableName = "TempWatch", passtableName = "Users";
+var thingName = "AquaOS", passtableName = "Users", shadowtableName = "Shadows";
 var dynamoDB,ShadowAPI;
 //var IotData;
 fs.readFile("credentials","utf8",function(err,data){
@@ -90,8 +90,8 @@ app.get("/test",function(req,res){
 });
 
 function getUser(username,getCredentials, callback){
-  if(getCredentials) query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"password,token,lastAccess"};
-  else query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"database,shadow,lastAccess"};
+  if(getCredentials) query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"password,theToken,lastAccess"};
+  else query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"dataname,shadow,lastAccess"};
   dynamoDB.getItem(query,function(err,data){
     if(err){
       console.log("error getting user info for user "+JSON.stringify(username));
@@ -106,25 +106,29 @@ function getUser(username,getCredentials, callback){
   });
 }
 
+app.get("/images/*",function(req,res){ res.sendFile(__dirname+req.url);});
+app.get("*.css",function(req,res){ res.sendFile(__dirname+req.url);});
+
 /* handle logins */
 var DISABLE_LOGIN = true;
 if(process.argv.length>2 && process.argv[2]=="true") DISABLE_LOGIN = false; //command line arg
 if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
+
 app.use(function(req,res,next){
   if(DISABLE_LOGIN ||
      (req.url=="/login" || req.url=="/newUser")) next();
   else if(req.cookies && req.cookies.info){
-    if(req.cookies.info){
-      info = JSON.parse(req.cookies.info);
+    if(req.cookies.info && req.cookies.theToken && req.cookies.theToken != ""){
+      info = safeParse(req.cookies.info);
       dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:info.username}}},function(err,data){
         if(err){
           console.log(err);
           res.status(ERROR.serverError).send(err);
         }else if(req.cookies && data.Item && info.theToken == data.Item.theToken.S) next();
-        else res.status(ERROR.unauthorized).redirect("/login");
+        else res.redirect("/login");
       });
     }else next();
-  }else res.status(ERROR.forbidden).redirect("/login");
+  }else res.redirect("/login");
 });
 app.get("/login",function(req,res){
   fs.readFile("login.html",function(err,data){
@@ -138,57 +142,69 @@ app.post("/login",function(req,res){
   dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:user}}},function(err,data){
     if(err) res.status(ERROR.serverError).send({error:err});
     else if(!data.Item || pswd != data.Item.password.S){
-      res.status(ERROR.unauthorized).send({error:"invalid username or password."});
+      res.status(ERROR.unauthorized).send({error:"Invalid username or password."});
     }else{
       token = randtoken.generate(32);
       dynamoDB.updateItem({TableName: passtableName,
           Key:{"username":{S:user}},
           ExpressionAttributeValues:{":s":{S:token}},
-          UpdateExpression: "SET token = :s"},function(err,data){
+          UpdateExpression: "SET theToken = :s"},function(err,data){
         if(err){
           console.log(err);
           res.status(ERROR.serverError).send(err);
         }else{
           console.log("logging in...");
-          cookie = {username:user,token:token};
+          cookie = {username:user,theToken:token};
           res.cookie("info",cookie);
-          res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
+          res.redirect("/");
+          //res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
         }
       });
     }
   });
 });
 app.get("/newUser",function(req,res){
-  fs.readFile("login.html",function(err,data){
+  fs.readFile("newUser.html",function(err,data){
     res.send(data.toString());
   });
 });
 app.post("/newUser",function(req,res){
   var params = req.body;
-  if(!params.password || !params.username){
+  if(!params.password || !params.username || !params.uid){
     res.status(ERROR.badRequest).send({error:"Your request is invalid."});
   }else{
-    dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:params.username}}},function(err,data){
+    dynamoDB.getItem({TableName:shadowtableName,Key:{"shadowName":{S:params.uid}}},function(err,data){
+      console.log(JSON.stringify(data));
       if(err){
-        res.status(ERROR.notFound).send(err);
+        res.status(ERROR.serverError).send(err);
         console.log(err);
-      }else if(data.Item){
-        res.status(ERROR.badRequest).send({error:"Error - user already exists"});
+      }else if(!data.Item){
+        res.status(ERROR.badRequest).send({error:"This device does not exist"});
       }else{
-        theToken = randtoken.generate(32);
-        newuser = {username:{S:params.username},
-                   password:{S:params.password},
-                   theToken:{S:theToken},
-                   lastAccess:{S:getDateStr()}};
-        dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
+        dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:params.username}}},function(err,data){
           if(err){
-            res.status(ERROR.serverError).send(err);
+            res.status(ERROR.notFound).send(err);
             console.log(err);
+          }else if(data.Item){
+            res.status(ERROR.badRequest).send({error:"Username already exists"});
           }else{
-            console.log("logging in...");
-            cookie = {username:params.username,theToken:theToken};
-            res.cookie("info",JSON.stringify(cookie),{maxAge:3600*1000});
-            res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
+            theToken = randtoken.generate(32);
+            newuser = {username:{S:params.username},
+                       password:{S:params.password},
+                       theToken:{S:theToken},
+                       lastAccess:{S:getDateStr()}};
+            dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
+              if(err){
+                res.status(ERROR.serverError).send(err);
+                console.log(err);
+              }else{
+                console.log("logging in...");
+                cookie = {username:params.username,theToken:theToken};
+                res.cookie("info",JSON.stringify(cookie),{maxAge:3600*1000});
+                res.redirect("/");
+                //res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
+              }
+            });
           }
         });
       }
@@ -200,58 +216,73 @@ app.get("/",function(req,res){ //only accessible if user is logged in
     res.send(data.toString());
   });
 });
-app.get("/myIndex",function(req,res){ //only accessible if user is logged in
-  fs.readFile("myindex.html",function(err,data){
-    res.send(data.toString());
-  });
-});
 app.get("/app.min.js",function(req,res){
   fs.readFile("app.min.js",function(err,data){
     res.send(data.toString());
   });
  console.log("requests "+req.url);
 });
-app.get("/application.css",function(req,res){
-   fs.readFile("application.css",function(err,data){
-    res.send(data.toString());
-  });
- console.log("requests "+req.url);
-});
+function safeParse(string){
+  try{
+    return JSON.parse(string);
+  }catch(e){
+    return string;
+  }
+}
 app.post("/logout",function(req,res){
-  res.clearCookie("info");
-  res.sendStatus(SUCCESS.noContent);
+  info = safeParse(req.cookies.info);
+  dynamoDB.updateItem({TableName: passtableName,
+    Key:{"username":{S:info.username}},
+    UpdateExpression: "REMOVE theToken"},function(err,data){
+    if(err){
+      console.log(err);
+      res.status(ERROR.serverError).send(err);
+    }else{
+      res.clearCookie("info");
+      res.sendStatus(SUCCESS.noContent);
+    }
+  });
 });
 
 app.post("/reset",function(req,res){
-  console.log("WARNING: restarting table will take about 35 seconds.");
-  dynamoDB.deleteTable({TableName:tableName},function(err,data){
-    console.log("deleting table...");
-    dynamoDB.waitFor("tableNotExists",{TableName:tableName},function(err,data){
-      if(err) console.log(err);
-      else{
-        console.log("table deleted! recreating table...");
-        createTable();
-        dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
-          if(err) console.log(err);
-          else{
-            console.log("table recreated!");
-            res.send("{}");
-          }
-        });
-      }
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false, function(resp){
+    console.log("WARNING: restarting table will take about 35 seconds.");
+    dynamoDB.deleteTable({TableName:resp.item.dataname.S},function(err,data){
+      console.log("deleting table...");
+      dynamoDB.waitFor("tableNotExists",{TableName:resp.item.dataname.S},function(err,data){
+        if(err) console.log(err);
+        else{
+          console.log("table deleted! recreating table...");
+          createTable(resp.item.dataname.S);
+          dynamoDB.waitFor("tableExists",{TableName:resp.item.dataname.S},function(err,data){
+            if(err) console.log(err);
+            else{
+              console.log("table recreated!");
+              res.send("{}");
+            }
+          });
+        }
+      });
     });
   });
 });
 
 app.get("/shadow",function(req,res){
-  ShadowAPI.getThingShadow({thingName:"SeaSea"},function(err,data){
-    if(err){
-      console.log(err);
-      res.status(ERROR.serverError).send(err);
-    }else{
-      msg = JSON.parse(data.payload);
-      res.send(msg.state || {});
-    }
+  info = safeParse(req.cookies.info);
+  console.log(info);
+  getUser(info.username,false, function(resp){
+    console.log(resp);
+    console.log("requesting "+resp.item.shadow.S);
+    ShadowAPI.getThingShadow({thingName:resp.item.shadow.S},function(err,data){
+      if(err){
+        console.log(err);
+        res.status(ERROR.serverError).send(err);
+      }else{
+        msg = safeParse(data.payload);
+        res.send(msg.state || {});
+      }
+    });
   });
 });
 
@@ -260,66 +291,21 @@ app.post("/shadow",function(req,res){
   delete(req.body.state);
   params = req.body;
 
-  updatestr = {"state":{}};
-  updatestr.state[state] = params;
-  console.log(updatestr);
-  ShadowAPI.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
-    if(err){
-      console.log(err);
-      res.status(400);
-      res.send("Error.");
-    }else{
-      res.send("Success.");
-    }
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false,function(resp){
+    updatestr = {"state":{}};
+    updatestr.state[state] = params;
+    console.log(updatestr);
+    ShadowAPI.updateThingShadow({thingName:resp.item.shadow.S,payload:JSON.stringify(updatestr)},function(err,data){
+      if(err){
+        console.log(err);
+        res.status(400).send("Error.");
+      }else{
+        res.send("Success.");
+      }
+    });
   });
 });
-
-/*
-app.get("/shadow",function(req,res){
-  console.log("Shadow requested.");
-  IotData.getThingShadow({thingName:"AquaOS"},function(err,data){
-    if(err){
-      console.log(err);
-      res.send("ERROR");
-    }else{
-      msg = JSON.parse(data.payload);
-      msg = msg.state.desired;
-      res.send(msg || {});
-    }
-  });
-});
-
-app.post("/shadow",function(req,res){
-  var state = req.body.state || "desired";
-  delete(req.body.state);
-  params = req.body;
-
-  updatestr = {"state":{}};
-  updatestr.state[state] = params;
-  console.log(updatestr);
-  IotData.updateThingShadow({thingName:thingName,payload:JSON.stringify(updatestr)},function(err,data){
-    if(err){
-      console.log(err);
-      res.status(400);
-      res.send("Error.");
-    }else{
-      res.send("Success.");
-    }
-  });
-});
-*/
-/*
-var commands=[];
-app.get("/commands",function(req,res){
-  console.log("Requesting commands.");
-  res.send(commands);
-});
-app.post("/commands",function(req,res){
-  if(req.body.reset) commands = [];
-  if(req.body.command) commands.push(req.body.command);
-});
-*/
-
 
 app.post("/lambda",function(req,res){
   console.log("Lambda says: "+JSON.stringify(req.body));
@@ -351,108 +337,120 @@ app.post("/elem",function(req,res){
 app.post("/fish",function(req,res){
   var newdata = req.body;
   var time = getDateStr();
-  dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
-    item = {"Timestamp":{"S":time},"type":{"S":"fish"}};
-    for(i=1;i<PARAMS.fish.length;i++){
-      param = PARAMS.fish[i];
-      name = param.name;
-      type = param.type;
-      val = {};
-      val[type] = ""+newdata[name];
-      item[name] = val;
-      console.log(val);
-    }
-    if(newdata.add==undefined || newdata.add){
-      dynamoDB.putItem({Item:item,TableName:tableName,ReturnConsumedCapacity:"TOTAL"},function(err,data){
-        if(err) res.send(err);
-        else res.send("Done!");
-      });
-    }else{
-      getData("fish",undefined,undefined,undefined,function(data){
-        targetFish = undefined;
-        for(idx in data){
-          fish = data[idx];
-          console.log(fish);
-          if(fish.id === newdata.id){
-            targetFish = data[idx];
-            break;
-          }
-        }
-        if(targetFish){
-          dynamoDB.deleteItem({TableName:tableName,Key:{Timestamp:{S:targetFish.Timestamp}}},
-                                function(err,data){
-                                  if(err){
-                                  console.log(err);
-                                  res.send(err);
-                                  }else res.send("Finished.");
-                                });
-        }else res.send("failed.");
-      });
-    }
-  });
-});
-
-app.get("/fish",function(req,res){
-  console.log("fish requested");
-  type = "fish";
-  //first make sure table exists
-  dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
-    //get values
-    dynamoDB.scan({TableName:tableName}, function(err, data) {
-      if (err) res.send(err); // an error occurred
-      else{
-        //simplify data
-        dataItems = data.Items;
-        var values = new Array();
-        for(i=0;i<data.Items.length;i++){
-          item = data.Items[i];
-          if(item.type == undefined){
-            console.log(item);
-            continue;
-          }
-          if(item.type.S != type) continue;
-          pushitem = {};
-          for(j=0;j<PARAMS[type].length;j++){
-            name=PARAMS[type][j].name;
-            datatype=PARAMS[type][j].type;
-            val = item[name][datatype];
-            if(datatype == "N") val = parseInt(val);
-            pushitem[name] = val;
-          }
-          values.push(pushitem);
-        }
-         
-        //sort data. First item val always guaranteed to be Timestamp
-        for(i=0;i<values.length;i++){
-          newmin = values[i].Timestamp;
-          newidx = i;
-          for(j=i+1;j<values.length;j++){
-            if(values[j].Timestamp < newmin){
-              newmin = values[j].Timestamp;
-              newidx = j;
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false, function(resp){
+    tableName = resp.item.dataname.S;
+    dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
+      item = {"Timestamp":{"S":time},"type":{"S":"fish"}};
+      for(i=1;i<PARAMS.fish.length;i++){
+        param = PARAMS.fish[i];
+        name = param.name;
+        type = param.type;
+        val = {};
+        val[type] = ""+newdata[name];
+        item[name] = val;
+        console.log(val);
+      }
+      if(newdata.add==undefined || newdata.add){
+        dynamoDB.putItem({Item:item,TableName:tableName,ReturnConsumedCapacity:"TOTAL"},function(err,data){
+          if(err) res.send(err);
+          else res.send("Done!");
+        });
+      }else{
+        getData(tableName,"fish",undefined,undefined,undefined,function(data){
+          targetFish = undefined;
+          for(idx in data){
+            fish = data[idx];
+            console.log(fish);
+            if(fish.id === newdata.id){
+              targetFish = data[idx];
+              break;
             }
           }
-          savedval = values[i];
-          values[i] = values[newidx];
-          values[newidx] = savedval;
-        }
-        console.log("fish are: "+JSON.stringify(values));
-        res.send(values);
+          if(targetFish){
+            dynamoDB.deleteItem({TableName:tableName,Key:{Timestamp:{S:targetFish.Timestamp}}},
+                                  function(err,data){
+                                    if(err){
+                                    console.log(err);
+                                    res.send(err);
+                                    }else res.send("Finished.");
+                                  });
+          }else res.send("failed.");
+        });
       }
     });
   });
 });
 
-app.post("/data",function(req,res){
-  console.log("Database info requested.");
-  type = "data";
-  lower = req.body.lower;
-  upper = req.body.upper;
-  console.log(lower+","+upper);
-  getData(type,lower,upper,res,undefined);
+app.get("/fish",function(req,res){
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false, function(resp){
+    tableName = resp.item.dataname.S;
+    console.log("fish requested");
+    type = "fish";
+    //first make sure table exists
+    dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
+      //get values
+      dynamoDB.scan({TableName:tableName}, function(err, data) {
+        if (err) res.send(err); // an error occurred
+        else{
+          //simplify data
+          dataItems = data.Items;
+          var values = new Array();
+          for(i=0;i<data.Items.length;i++){
+            item = data.Items[i];
+            if(item.type == undefined){
+              console.log(item);
+              continue;
+            }
+            if(item.type.S != type) continue;
+            pushitem = {};
+            for(j=0;j<PARAMS[type].length;j++){
+              name=PARAMS[type][j].name;
+              datatype=PARAMS[type][j].type;
+              val = item[name][datatype];
+              if(datatype == "N") val = parseInt(val);
+              pushitem[name] = val;
+            }
+            values.push(pushitem);
+          }
+         
+          //sort data. First item val always guaranteed to be Timestamp
+          for(i=0;i<values.length;i++){
+            newmin = values[i].Timestamp;
+            newidx = i;
+            for(j=i+1;j<values.length;j++){
+              if(values[j].Timestamp < newmin){
+                newmin = values[j].Timestamp;
+                newidx = j;
+              }
+            }
+            savedval = values[i];
+            values[i] = values[newidx];
+            values[newidx] = savedval;
+          }
+          console.log("fish are: "+JSON.stringify(values));
+          res.send(values);
+        }
+      });
+    });
+  });
 });
 
-function getData(type,lower,upper,res,callback){
+app.post("/data",function(req,res){
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false, function(resp){
+    console.log(resp.item);
+    console.log("Database info requested.");
+    type = "data";
+    lower = req.body.lower;
+    upper = req.body.upper;
+    console.log(lower+","+upper);
+    getData(resp.item.dataname.S,type,lower,upper,res,undefined);
+  });
+});
+
+function getData(tableName,type,lower,upper,res,callback){
   //first make sure table exists
   dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
     //get values
@@ -510,51 +508,13 @@ function getData(type,lower,upper,res,callback){
   });
 }
 
-
-/*
-app.get("/schedule",function(req,res){
-  var user = "admin";//req.cookies.info.username
-  dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:user}}},function(err,data){
-    if(err){
-      console.log(err);
-      res.send("Invalid request.");
-    }else{
-      console.log(data.Item.schedule.S);
-      res.send({"schedule":JSON.parse(data.Item.schedule.S)});
-    }
-  });
-});
-
-app.post("/schedule",function(req,res){
-  schedule = req.body.schedule;
-  console.log(schedule);
-  var user = "admin";//req.cookies.info.username || "admin";
-  var params = {TableName: passtableName,
-               Key:{"username":{S:user}},
-               ExpressionAttributeValues:{":s":{S:JSON.stringify(schedule)}},
-               UpdateExpression: "SET schedule = :s"};
-  dynamoDB.updateItem(params,function(err,data){
-    if(err) console.log(err);
-  });
-
-  updatestr = {state:{desired:{schedule:schedule}}};
-  ShadowAPI.updateThingShadow({thingName:"SeaSea",payload:JSON.stringify(updatestr)},function(err,data){
-    if(err){
-      console.log(err);
-      res.status(400);
-      res.send("Error.");
-    }else{
-      res.send("Success.");
-    }
-  });
-});
-*/
-
 app.get("*",function(req,res){
-  res.send("404 - Request invalid.");
+  console.log(req.url);
+  res.status(ERROR.notFound).send("404 - Request invalid.");
 });
 
 app.post("*",function(req,res){
+  console.log(req.url);
   /*var bodyStr = '';
   console.log("here");
   req.on("data",function(chunk){
@@ -566,11 +526,10 @@ app.post("*",function(req,res){
     console.log(bodyStr);
     res.send(bodyStr);
   });*/
-  res.send("404 - Request invalid.");
+  res.status(ERROR.notFound).send("404 - Request invalid.");
 });
 
 
-var signedon=false; //not signed in
 http.createServer(app).listen(8080,function(){ // I redirect the port
   console.log("Server running on http://ec2-52-15-137-111.us-east-2.compute.amazonaws.com/");
 });
@@ -645,8 +604,8 @@ function inRange(date,date_low,date_high){/* v */
           secondInt(target) <= secondInt(high));
 }
 
-function createTable(){ /* v */
-  dynamoDB.createTable({TableName:tableName,
+function createTable(databaseName){ /* v */
+  dynamoDB.createTable({TableName:databaseName,
        KeySchema: [{AttributeName:"Timestamp",KeyType:"HASH"}],
        AttributeDefinitions: [{AttributeName:"Timestamp",AttributeType:"S"}],
        ProvisionedThroughput:{ReadCapacityUnits: 1, WriteCapacityUnits:1} },
