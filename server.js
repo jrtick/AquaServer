@@ -17,9 +17,8 @@ var ERROR = {badRequest:400,unauthorized:401,forbidden:403,notFound:404,timeout:
 var SUCCESS = {okay:200,created:201,accepted:202,noContent:204};
 
 /* load credentials */
-var thingName = "AquaOS", passtableName = "Users", shadowtableName = "Shadows";
+var passtableName = "Users", shadowtableName = "Shadows";
 var dynamoDB,ShadowAPI;
-//var IotData;
 fs.readFile("credentials","utf8",function(err,data){
   if(err){
     console.log(err);
@@ -30,8 +29,6 @@ fs.readFile("credentials","utf8",function(err,data){
     myConfig = new AWS.Config();
     myConfig.update({region:lines[2],credentials:creds});
     dynamoDB = new AWS.DynamoDB(myConfig);
-    //IotData = new AWS.IotData({credentials:creds,endpoint:lines[3],region:lines[2]});
-    
     rcreds = new AWS.Credentials(lines[4],lines[5]);
     ShadowAPI = new AWS.IotData({credentials:rcreds,endpoint:lines[6],region:lines[2]});
     delete(lines);delete(myConfig);delete(creds);delete(rcreds);
@@ -45,6 +42,7 @@ fs.readFile("credentials","utf8",function(err,data){
       }else{
         tables = data.TableNames;
         tables.sort(); //alphabetic ordering
+        console.log(JSON.stringify(tables));
         if(tables.indexOf(passtableName) < 0){ //no users exist.
           dynamoDB.createTable({TableName:passtableName,
             KeySchema: [{AttributeName:"username",KeyType:"HASH"}],
@@ -79,20 +77,20 @@ fs.readFile("credentials","utf8",function(err,data){
     });
   }
 });
-
-app.get("/test",function(req,res){
-  getUser("admin",false);
-  getUser("admin",true);
-  getUser("admin",false,function(item){
-    res.send(item); 
-  });
-});
+var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}},
+                    {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
+                    {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
+                    {name:"lights",type:"N",valid: function(x){return x==1 || x==0;} }],
+            config:[{name:"Timestamp",type:"S"},{name:"lights",type:"N"}, //lights are 0 or 1 to be off or on
+                    {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
+                    {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
+              fish:[{name:"Timestamp",type:"S"},{name:"id",type:"N"},{name:"name",type:"S"},{name:"url",type:"S"},
+                    {name:"temperature_lower",type:"N"},{name:"temperature_upper",type:"N"}]};
 
 app.post("/lambda",function(req,res){
   console.log("Lambda says: "+JSON.stringify(req.body));
   res.send("ack");
 });
-
 
 function getUser(username,getCredentials, callback){
   if(getCredentials) query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"password,theToken,lastAccess"};
@@ -114,29 +112,6 @@ function getUser(username,getCredentials, callback){
 app.get("/images/*",function(req,res){ res.sendFile(__dirname+req.url);});
 app.get("*.css",function(req,res){ res.sendFile(__dirname+req.url);});
 
-/* handle logins */
-var DISABLE_LOGIN = true;
-if(process.argv.length>2 && process.argv[2]=="true") DISABLE_LOGIN = false; //command line arg
-if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
-
-app.use(function(req,res,next){
-  if(DISABLE_LOGIN ||
-     (req.url=="/login" || req.url=="/newUser")){
-    next();
-  }else if(req.cookies && req.cookies.info){
-    info = safeParse(req.cookies.info);
-    if(info.theToken){
-      dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:info.username}}},function(err,data){
-        if(err){
-          console.log(err);
-          res.status(ERROR.serverError).send(err);
-        }else if(data.Item && info.theToken == data.Item.theToken.S){
-          next();
-        }else res.redirect("/login");
-      });
-    }else res.redirect("/login");
-  }else res.redirect("/login");
-});
 app.get("/login",function(req,res){
   fs.readFile("login.html",function(err,data){
     res.send(data.toString());
@@ -217,26 +192,31 @@ app.post("/newUser",function(req,res){
     });
   }
 });
-/*
-app.get("/ready",function(req,res){
-  info = safeParse(req.cookies.info);
-  getUser(info.username,false, function(resp){
-    dynamoDB.waitFor("tableExists",{TableName:resp.item.dataname.S},function(err,data){
-      if(err){
-        console.log(err);
-        resp.status(ERROR.serverError).send(err);
-      }else res.send(
-    });
-  });
+
+/* handle logins */
+app.use(function(req,res,next){
+  if(req.cookies && req.cookies.info){
+    info = safeParse(req.cookies.info);
+    if(info.theToken){
+      dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:info.username}}},function(err,data){
+        if(err){
+          console.log(err);
+          res.status(ERROR.serverError).send(err);
+        }else if(data.Item && info.theToken == data.Item.theToken.S){
+          next();
+        }else res.status(ERROR.unauthorized).redirect("/login");
+      });
+    }else res.status(ERROR.unauthorized).redirect("/login");
+  }else res.status(ERROR.unauthorized).redirect("/login");
 });
-*/
+
 
 app.get("/",function(req,res){ //only accessible if user is logged in
   fs.readFile("index.html",function(err,data){
     res.send(data.toString());
   });
 });
-app.get("/app.min/*",function(req,res){ res.sendFile(__dirname+req.url);});
+app.get("/app.min.*",function(req,res){ res.sendFile(__dirname+req.url);});
 
 function safeParse(string){
   try{
@@ -289,7 +269,6 @@ app.get("/shadow",function(req,res){
   console.log(info);
   getUser(info.username,false, function(resp){
     console.log(resp);
-    console.log("requesting "+resp.item.shadow.S);
     ShadowAPI.getThingShadow({thingName:resp.item.shadow.S},function(err,data){
       if(err){
         console.log(err);
@@ -315,7 +294,7 @@ app.post("/shadow",function(req,res){
     ShadowAPI.updateThingShadow({thingName:resp.item.shadow.S,payload:JSON.stringify(updatestr)},function(err,data){
       if(err){
         console.log(err);
-        res.status(400).send("Error.");
+        res.status(ERROR.serverError).send(err);
       }else{
         res.send("Success.");
       }
@@ -457,16 +436,10 @@ app.post("/data",function(req,res){
     getData(resp.item.dataname.S,type,lower,upper,res,undefined);
   });
 });
-
 function inRange(target_str,date_low,date_high){/* v */
   target = parseDate(target_str);
   targetDate = new Date(target.year,target.month-1,target.day,
                         target.hour,target.minute,target.second);
-  /*console.log("----------");
-  console.log(targetDate);
-  console.log(date_low);
-  console.log(date_high);
-  console.log(targetDate >= date_low && targetDate <= date_high);*/
   return (targetDate >= date_low) && (targetDate <= date_high);
 }
 function getData(tableName,type,lower,upper,res,callback){
@@ -596,16 +569,6 @@ function parseDate(date){/* v */
             hour:nums[3],minute:nums[4],second:nums[5]};
 }
       
-function secondInt(date){/* v */
-  monthdays = [31,28,31,30,31,30,31,31,30,31,30,31];
-  leapyear = ((date.year - 2016)%4 == 0);
-  monthdays[1] += leapyear; //account for leapyear
-       
-  days = 0;
-  for(i=0;i<date.month;i++) days += monthdays[i];
-  return (days+date.day)*24*3600+date.hour*3600+date.minute*60+date.second;
-}
-
 function createTable(databaseName,callback){ /* v */
   dynamoDB.createTable({TableName:databaseName,
        KeySchema: [{AttributeName:"Timestamp",KeyType:"HASH"}],
@@ -616,17 +579,3 @@ function createTable(databaseName,callback){ /* v */
          else callback((err)? {error:err} : {});
        });
 }
-
-
-var PARAMS = {data:[{name:"Timestamp",type:"S",valid: function(x){return true;}},
-                    {name:"temp",type:"N",valid: function(x){return x>=40 && x<=100;} },
-                    {name:"co2",type:"N",valid: function(x){return x>=0 && x<=100;} },
-                    {name:"lights",type:"N",valid: function(x){return x==1 || x==0;} }],
-          commands:[{name:"Timestamp",type:"S"},{name:"command",type:"S"}],
-            config:[{name:"Timestamp",type:"S"},{name:"lights",type:"N"}, //lights are 0 or 1 to be off or on
-                    {name:"temp_target",type:"N"},{name:"temp_lower",type:"N"},{name:"temp_upper",type:"N"},
-                    {name: "co2_target",type:"N"},{name: "co2_lower",type:"N"},{name: "co2_upper",type:"N"}],
-              fish:[{name:"Timestamp",type:"S"},{name:"id",type:"N"},{name:"name",type:"S"},{name:"url",type:"S"},
-                    {name:"temperature_lower",type:"N"},{name:"temperature_upper",type:"N"}]};
-var DATA = {};
-for(i=0;i<PARAMS.data.length;i++) DATA[PARAMS.data[i].name] = []; 
