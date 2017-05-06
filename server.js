@@ -58,13 +58,12 @@ fs.readFile("credentials","utf8",function(err,data){
               }else console.log("User table created. Fresh start");
             });
         }else{
-          console.log((tables.length-1) + " users exist"); //assumes one table exists per user, plus users table
-
           query = {TableName:passtableName,ProjectionExpression:"username,lastAccess"};
           dynamoDB.scan(query,function(err,data){
             if(err) console.log(err);
             else{
               curdate = parseDate(getDateStr());
+              console.log(data.Count + " users exist");
               for(i=0;i<data.Count;i++){
                 username = data.Items[i].username.S;
                 lastAccessed = parseDate(data.Items[i].lastAccess.S);
@@ -88,6 +87,12 @@ app.get("/test",function(req,res){
     res.send(item); 
   });
 });
+
+app.post("/lambda",function(req,res){
+  console.log("Lambda says: "+JSON.stringify(req.body));
+  res.send("ack");
+});
+
 
 function getUser(username,getCredentials, callback){
   if(getCredentials) query = {TableName:passtableName,Key:{"username":{S:username}},ProjectionExpression:"password,theToken,lastAccess"};
@@ -116,18 +121,20 @@ if(!DISABLE_LOGIN) console.log("Running app with authorization requirements");
 
 app.use(function(req,res,next){
   if(DISABLE_LOGIN ||
-     (req.url=="/login" || req.url=="/newUser")) next();
-  else if(req.cookies && req.cookies.info){
-    if(req.cookies.info && req.cookies.theToken && req.cookies.theToken != ""){
-      info = safeParse(req.cookies.info);
+     (req.url=="/login" || req.url=="/newUser")){
+    next();
+  }else if(req.cookies && req.cookies.info){
+    info = safeParse(req.cookies.info);
+    if(info.theToken){
       dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:info.username}}},function(err,data){
         if(err){
           console.log(err);
           res.status(ERROR.serverError).send(err);
-        }else if(req.cookies && data.Item && info.theToken == data.Item.theToken.S) next();
-        else res.redirect("/login");
+        }else if(data.Item && info.theToken == data.Item.theToken.S){
+          next();
+        }else res.redirect("/login");
       });
-    }else next();
+    }else res.redirect("/login");
   }else res.redirect("/login");
 });
 app.get("/login",function(req,res){
@@ -155,9 +162,8 @@ app.post("/login",function(req,res){
         }else{
           console.log("logging in...");
           cookie = {username:user,theToken:token};
-          res.cookie("info",cookie);
-          res.redirect("/");
-          //res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
+          res.cookie("info",cookie,{maxAge:30*24*3600*1000});
+          res.status(SUCCESS.created).send({location:"/index",cookie:cookie,maxAge:3600*1000});
         }
       });
     }
@@ -171,14 +177,13 @@ app.get("/newUser",function(req,res){
 app.post("/newUser",function(req,res){
   var params = req.body;
   if(!params.password || !params.username || !params.uid){
-    res.status(ERROR.badRequest).send({error:"Your request is invalid."});
+    res.status(ERROR.badRequest).send({error:"Required fields missing."});
   }else{
-    dynamoDB.getItem({TableName:shadowtableName,Key:{"shadowName":{S:params.uid}}},function(err,data){
-      console.log(JSON.stringify(data));
+    dynamoDB.getItem({TableName:shadowtableName,Key:{"shadowName":{S:params.uid}}},function(err,shadowdata){
       if(err){
         res.status(ERROR.serverError).send(err);
         console.log(err);
-      }else if(!data.Item){
+      }else if(!shadowdata.Item){
         res.status(ERROR.badRequest).send({error:"This device does not exist"});
       }else{
         dynamoDB.getItem({TableName:passtableName,Key:{"username":{S:params.username}}},function(err,data){
@@ -192,7 +197,9 @@ app.post("/newUser",function(req,res){
             newuser = {username:{S:params.username},
                        password:{S:params.password},
                        theToken:{S:theToken},
-                       lastAccess:{S:getDateStr()}};
+                       lastAccess:{S:getDateStr()},
+                       shadow:{S:params.uid},
+                       dataname:{S:shadowdata.Item.dataname.S}};
             dynamoDB.putItem({TableName:passtableName,Item:newuser},function(err,data){
               if(err){
                 res.status(ERROR.serverError).send(err);
@@ -200,9 +207,8 @@ app.post("/newUser",function(req,res){
               }else{
                 console.log("logging in...");
                 cookie = {username:params.username,theToken:theToken};
-                res.cookie("info",JSON.stringify(cookie),{maxAge:3600*1000});
-                res.redirect("/");
-                //res.status(SUCCESS.created).send({location:"/myIndex",cookie:cookie,maxAge:3600*1000});
+                res.cookie("info",cookie,{maxAge:30*24*3600*1000});
+                res.status(SUCCESS.created).send({location:"/index",cookie:cookie,maxAge:3600*1000});
               }
             });
           }
@@ -211,17 +217,27 @@ app.post("/newUser",function(req,res){
     });
   }
 });
+/*
+app.get("/ready",function(req,res){
+  info = safeParse(req.cookies.info);
+  getUser(info.username,false, function(resp){
+    dynamoDB.waitFor("tableExists",{TableName:resp.item.dataname.S},function(err,data){
+      if(err){
+        console.log(err);
+        resp.status(ERROR.serverError).send(err);
+      }else res.send(
+    });
+  });
+});
+*/
+
 app.get("/",function(req,res){ //only accessible if user is logged in
   fs.readFile("index.html",function(err,data){
     res.send(data.toString());
   });
 });
-app.get("/app.min.js",function(req,res){
-  fs.readFile("app.min.js",function(err,data){
-    res.send(data.toString());
-  });
- console.log("requests "+req.url);
-});
+app.get("/app.min/*",function(req,res){ res.sendFile(__dirname+req.url);});
+
 function safeParse(string){
   try{
     return JSON.parse(string);
@@ -305,11 +321,6 @@ app.post("/shadow",function(req,res){
       }
     });
   });
-});
-
-app.post("/lambda",function(req,res){
-  console.log("Lambda says: "+JSON.stringify(req.body));
-  res.send("ack");
 });
 
 app.post("/elem",function(req,res){
@@ -440,16 +451,24 @@ app.get("/fish",function(req,res){
 app.post("/data",function(req,res){
   info = safeParse(req.cookies.info);
   getUser(info.username,false, function(resp){
-    console.log(resp.item);
-    console.log("Database info requested.");
     type = "data";
     lower = req.body.lower;
     upper = req.body.upper;
-    console.log(lower+","+upper);
     getData(resp.item.dataname.S,type,lower,upper,res,undefined);
   });
 });
 
+function inRange(target_str,date_low,date_high){/* v */
+  target = parseDate(target_str);
+  targetDate = new Date(target.year,target.month-1,target.day,
+                        target.hour,target.minute,target.second);
+  /*console.log("----------");
+  console.log(targetDate);
+  console.log(date_low);
+  console.log(date_high);
+  console.log(targetDate >= date_low && targetDate <= date_high);*/
+  return (targetDate >= date_low) && (targetDate <= date_high);
+}
 function getData(tableName,type,lower,upper,res,callback){
   //first make sure table exists
   dynamoDB.waitFor("tableExists",{TableName:tableName},function(err,data){
@@ -475,46 +494,39 @@ function getData(tableName,type,lower,upper,res,callback){
           }
           values.push(pushitem);
         }
-         
-        //sort data. First item val always guaranteed to be Timestamp
-        for(i=0;i<values.length;i++){
-          newmin = values[i].Timestamp;
-          newidx = i;
-          for(j=i+1;j<values.length;j++){
-            if(values[j].Timestamp < newmin){
-              newmin = values[j].Timestamp;
-              newidx = j;
-            }
-          }
-          savedval = values[i];
-          values[i] = values[newidx];
-          values[newidx] = savedval;
+
+        //filter results by Timestamp      
+        if(lower){
+          lower = parseDate(lower);
+          lower = new Date(lower.year,lower.month-1,lower.day,
+                           lower.hour,lower.minute,lower.second);
         }
-              
-        //filter results by Timestamp            
-        values = values.map(function(value,index){
+        if(upper){
+          upper = parseDate(upper);
+          upper = new Date(upper.year,upper.month-1,upper.day,
+                           upper.hour,upper.minute,upper.second);
+        }
+        values2 = values.map(function(value,index){
           time = value.Timestamp;
-          if((lower==undefined && upper==undefined) ||
-             (lower!=undefined && upper!=undefined && inRange(time,lower,upper))) return value;
+          if(lower==undefined && upper==undefined) return value;
+          else if(lower!=undefined && upper!=undefined && inRange(time,lower,upper)) return value;
           else if(lower!=undefined && upper==undefined && inRange(time,lower,time)) return value;
           else if(upper!=undefined && lower==undefined && inRange(time,time,upper)) return value;
           else return NaN; //not within time frame
         });
-        values = values.filter(function(val){ return val;});
-        if(res) res.send(values); //gets rid of NaNs
-        if(callback) callback(values);
+        values3 = values2.filter(function(val){ return val;});//gets rid of NaNs
+        if(res) res.send(values3);
+        if(callback) callback(values3);
       }
     });
   });
 }
 
 app.get("*",function(req,res){
-  console.log(req.url);
   res.status(ERROR.notFound).send("404 - Request invalid.");
 });
 
 app.post("*",function(req,res){
-  console.log(req.url);
   /*var bodyStr = '';
   console.log("here");
   req.on("data",function(chunk){
@@ -594,22 +606,15 @@ function secondInt(date){/* v */
   return (days+date.day)*24*3600+date.hour*3600+date.minute*60+date.second;
 }
 
-function inRange(date,date_low,date_high){/* v */
-  target = parseDate(date);
-  low = parseDate(date_low);
-  high = parseDate(date_high);
-        
-  return (target.year >= low.year && target.year <= high.year &&
-          secondInt(target) >= secondInt(low) &&
-          secondInt(target) <= secondInt(high));
-}
-
-function createTable(databaseName){ /* v */
+function createTable(databaseName,callback){ /* v */
   dynamoDB.createTable({TableName:databaseName,
        KeySchema: [{AttributeName:"Timestamp",KeyType:"HASH"}],
        AttributeDefinitions: [{AttributeName:"Timestamp",AttributeType:"S"}],
        ProvisionedThroughput:{ReadCapacityUnits: 1, WriteCapacityUnits:1} },
-       function(err,data){console.log(err? err : data);});
+       function(err,data){
+         if(!callback) console.log(err? err : data);
+         else callback((err)? {error:err} : {});
+       });
 }
 
 
